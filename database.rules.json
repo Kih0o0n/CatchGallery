@@ -1,0 +1,8 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": true,
+    "users": { "$uid": { "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8" }, "tag": { ".validate": "newData.isString() && newData.val().matches(/^\\d{4}$/)" }, "score": { ".validate": "newData.isNumber() && newData.val() >= 0" } } },
+    "drawings": { "$id": { "status": { ".validate": "newData.val() === 'open' || newData.val() === 'solved' || newData.val() === 'expired' || newData.val() === 'withdrawn'" }, "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" } } }
+  }
+}

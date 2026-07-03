@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fff8f2">
+  <meta name="description" content="그리고 맞히는 비동기 그림 퀴즈, 캐치갤러리">
+  <title>캐치갤러리</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Jua&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header id="appHeader" class="app-header hidden">
+      <button id="backButton" class="icon-button" aria-label="뒤로 가기">‹</button>
+      <button class="brand-button" data-route="home"><span class="logo-mark">🎨</span> 캐치갤러리</button>
+      <div id="headerScore" class="score-chip">0점</div>
+    </header>
+    <main id="app" aria-live="polite"></main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <div id="modalRoot"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

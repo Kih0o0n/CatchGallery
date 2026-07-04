@@ -1,8 +1,91 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true,
-    "users": { "$uid": { "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8" }, "tag": { ".validate": "newData.isString() && newData.val().matches(/^\\d{4}$/)" }, "score": { ".validate": "newData.isNumber() && newData.val() >= 0" } } },
-    "drawings": { "$id": { "status": { ".validate": "newData.val() === 'open' || newData.val() === 'solved' || newData.val() === 'expired' || newData.val() === 'withdrawn'" }, "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" } } }
+    ".read": false,
+    ".write": false,
+    "admins": {
+      "$uid": { ".read": "auth != null && auth.uid === $uid" }
+    },
+    "users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        "nickname": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8" },
+        "nicknameKey": { ".validate": "newData.isString() && newData.val().matches(/^u_[0-9a-f]+$/)" },
+        "score": {
+          ".write": "auth != null && newData.isNumber() && newData.val() >= 0 && (auth.uid === $uid || (data.exists() && newData.val() >= data.val() && newData.val() - data.val() <= 10))",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+    "nicknameIndex": {
+      "$key": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)"
+      }
+    },
+    "drawings": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && ((!data.exists() && newData.child('drawerId').val() === auth.uid) || data.child('drawerId').val() === auth.uid || (data.child('status').val() === 'open' && newData.child('solverId').val() === auth.uid) || (newData.child('likeCount').isNumber() && newData.child('likeCount').val() >= 0))",
+        "drawerId": { ".validate": "newData.val() === data.val() || (!data.exists() && newData.val() === auth.uid)" },
+        "status": { ".validate": "newData.val() === 'open' || newData.val() === 'solved' || newData.val() === 'expired' || newData.val() === 'withdrawn'" },
+        "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" }
+      }
+    },
+    "drawingLikes": {
+      "$drawingId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && root.child('drawings').child($drawingId).child('drawerId').val() !== auth.uid"
+        }
+      }
+    },
+    "userDrawings": {
+      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
+    },
+    "userSolved": {
+      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
+    },
+    "feedbackMeta": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && ((!data.exists() && newData.exists()) || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true || (newData.child('likeCount').isNumber() && newData.child('dislikeCount').isNumber()))",
+        "displayAuthor": { ".validate": "!data.exists() || newData.val() === data.val()" },
+        "isAnonymous": { ".validate": "!data.exists() || newData.val() === data.val()" },
+        "isSecret": { ".validate": "!data.exists() || newData.val() === data.val()" },
+        "hidden": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true" },
+        "deleted": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('feedbackOwners').child($id).child(auth.uid).val() === true" },
+        "status": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true" },
+        "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "dislikeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+        "popularityScore": { ".validate": "newData.isNumber() && newData.val() === newData.parent().child('likeCount').val() - newData.parent().child('dislikeCount').val()" }
+      }
+    },
+    "feedbackContent": {
+      "$id": {
+        ".read": "auth != null && (root.child('feedbackMeta').child($id).child('isSecret').val() !== true || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)",
+        ".write": "auth != null && ((!data.exists() && newData.exists()) || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)"
+      }
+    },
+    "feedbackOwners": {
+      "$id": {
+        "$uid": {
+          ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+          ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true"
+        }
+      }
+    },
+    "userFeedback": {
+      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
+    },
+    "feedbackReactions": {
+      "$id": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && !root.child('feedbackOwners').child($id).child(auth.uid).exists()",
+          ".validate": "!newData.exists() || newData.val() === 'like' || newData.val() === 'dislike'"
+        }
+      }
+    }
   }
 }

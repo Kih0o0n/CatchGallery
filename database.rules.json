@@ -2,87 +2,163 @@
   "rules": {
     ".read": false,
     ".write": false,
+
     "admins": {
-      "$uid": { ".read": "auth != null && auth.uid === $uid" }
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
     },
+
     "users": {
       ".read": "auth != null",
       "$uid": {
-        ".write": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.child('nickname').isString() && newData.child('nicknameKey').isString() && newData.child('score').val() === 0 && newData.child('rankingDeleted').val() === false) || (data.exists() && !newData.exists() && !root.child('nicknameIndex').child(data.child('nicknameKey').val()).exists()) || (data.exists() && newData.child('nickname').val() === data.child('nickname').val() && newData.child('nicknameKey').val() === data.child('nicknameKey').val() && newData.child('createdAt').val() === data.child('createdAt').val() && ((newData.child('score').val() === data.child('score').val() && newData.child('rankingDeleted').val() === data.child('rankingDeleted').val() && newData.child('rankingDeletedAt').val() === data.child('rankingDeletedAt').val()) || (data.child('rankingDeleted').val() === false && newData.child('rankingDeleted').val() === true && newData.child('score').val() === 0 && newData.child('rankingDeletedAt').isNumber()) || (data.child('rankingDeleted').val() === true && data.child('score').val() === 0 && newData.child('rankingDeleted').val() === false && newData.child('score').val() === 0 && !newData.child('rankingDeletedAt').exists()))))",
+        ".validate": "newData.hasChildren(['nickname','nicknameKey','score','createdAt','lastSeenAt','rankingDeleted'])",
         "nickname": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8" },
         "nicknameKey": { ".validate": "newData.isString() && newData.val().matches(/^u_[0-9a-f]+$/)" },
-        "score": {
-          ".write": "auth != null && newData.isNumber() && newData.val() >= 0 && (auth.uid === $uid || (data.exists() && newData.val() >= data.val() && newData.val() - data.val() <= 10))",
-          ".validate": "newData.isNumber() && newData.val() >= 0"
-        }
+        "score": { ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === 0) || newData.val() === data.val() || newData.val() === 0)" },
+        "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "lastSeenAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "rankingDeleted": { ".validate": "newData.isBoolean()" },
+        "rankingDeletedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": "data.exists() && newData.val() === data.val()" }
       }
     },
+
     "nicknameIndex": {
       "$key": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || data.val() === auth.uid)"
+        ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid && root.child('users').child(auth.uid).child('nicknameKey').val() === $key) || data.val() === auth.uid && newData.val() === auth.uid)",
+        ".validate": "newData.isString()"
       }
     },
+
     "drawings": {
       ".read": "auth != null",
+      ".indexOn": ["status"],
       "$id": {
-        ".write": "auth != null && ((!data.exists() && newData.child('drawerId').val() === auth.uid) || data.child('drawerId').val() === auth.uid || (data.child('status').val() === 'open' && newData.child('solverId').val() === auth.uid) || (newData.child('likeCount').isNumber() && newData.child('likeCount').val() >= 0))",
-        "drawerId": { ".validate": "newData.val() === data.val() || (!data.exists() && newData.val() === auth.uid)" },
+        ".write": "auth != null && ((!data.exists() && newData.child('drawerId').val() === auth.uid && newData.child('drawerNickname').val() === root.child('users').child(auth.uid).child('nickname').val() && newData.child('status').val() === 'open' && newData.child('createdAt').val() <= now + 60000 && newData.child('createdAt').val() >= now - 300000 && newData.child('revisionCount').val() === 0 && newData.child('likeCount').val() === 0) || (data.exists() && data.child('status').val() === 'open' && !data.child('solverId').exists() && data.child('expiresAt').val() > now && data.child('drawerId').val() === auth.uid && newData.child('status').val() === 'open' && !newData.child('solverId').exists()) || (data.exists() && data.child('status').val() === 'open' && !data.child('solverId').exists() && data.child('expiresAt').val() > now && data.child('drawerId').val() === auth.uid && newData.child('status').val() === 'withdrawn' && newData.child('withdrawnAt').isNumber()) || (data.exists() && data.child('status').val() === 'open' && !data.child('solverId').exists() && data.child('expiresAt').val() > now && data.child('drawerId').val() !== auth.uid && newData.child('status').val() === 'solved' && newData.child('solverId').val() === auth.uid && newData.child('solverNickname').val() === root.child('users').child(auth.uid).child('nickname').val() && newData.child('hintUsed').isBoolean() && newData.child('solverReward').val() === (newData.child('hintUsed').val() ? 6 : 10) && newData.child('drawerReward').val() === (((newData.child('hintUsed').val() ? 6 : 10) - data.child('revisionCount').val() * 2) > 0 ? ((newData.child('hintUsed').val() ? 6 : 10) - data.child('revisionCount').val() * 2) : 0)) || (data.exists() && data.child('status').val() === 'open' && !data.child('solverId').exists() && data.child('expiresAt').val() <= now && newData.child('status').val() === 'expired' && newData.child('expiredAt').isNumber()))",
+        ".validate": "newData.hasChildren(['word','category','imageData','drawerId','status','createdAt','updatedAt','expiresAt','revisionCount','hintUsed','solverReward','drawerReward','likeCount']) && (newData.hasChild('drawerNickname') || newData.hasChild('drawerDisplayName')) && (newData.child('status').val() !== 'solved' || newData.hasChildren(['solverId','solvedAt'])) && (newData.child('status').val() !== 'withdrawn' || newData.hasChild('withdrawnAt')) && (newData.child('status').val() !== 'expired' || newData.hasChild('expiredAt'))",
+        "word": { ".validate": "newData.isString() && (!data.exists() || newData.val() === data.val())" },
+        "category": { ".validate": "newData.isString() && (!data.exists() || newData.val() === data.val())" },
+        "drawerId": { ".validate": "newData.isString() && ((!data.exists() && newData.val() === auth.uid) || newData.val() === data.val())" },
+        "drawerNickname": { ".validate": "newData.isString() && ((!data.exists() && newData.val() === root.child('users').child(auth.uid).child('nickname').val()) || newData.val() === data.val())" },
+        "createdAt": { ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())" },
+        "expiresAt": { ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === newData.parent().child('createdAt').val() + 172800000) || newData.val() === data.val())" },
+        "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "imageData": { ".validate": "newData.isString() && (!data.exists() || newData.val() === data.val() || (data.parent().child('drawerId').val() === auth.uid && data.parent().child('status').val() === 'open' && !data.parent().child('solverId').exists() && data.parent().child('expiresAt').val() > now && newData.parent().child('status').val() === 'open'))" },
+        "revisionCount": { ".validate": "newData.isNumber() && newData.val() >= 0 && (!data.exists() ? newData.val() === 0 : (newData.val() === data.val() || (data.parent().child('drawerId').val() === auth.uid && data.parent().child('status').val() === 'open' && newData.parent().child('status').val() === 'open' && newData.val() === data.val() + 1)))" },
         "status": { ".validate": "newData.val() === 'open' || newData.val() === 'solved' || newData.val() === 'expired' || newData.val() === 'withdrawn'" },
-        "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" }
+        "solverId": { ".validate": "data.exists() ? newData.val() === data.val() : (newData.val() === auth.uid && newData.parent().child('status').val() === 'solved')" },
+        "solverNickname": { ".validate": "data.exists() ? newData.val() === data.val() : (newData.isString() && newData.parent().child('status').val() === 'solved')" },
+        "solvedAt": { ".validate": "data.exists() ? newData.val() === data.val() : (newData.isNumber() && newData.val() <= now + 60000 && newData.parent().child('status').val() === 'solved')" },
+        "hintUsed": { ".validate": "newData.isBoolean() && ((!data.exists() && newData.val() === false) || newData.val() === data.val() || newData.parent().child('status').val() === 'solved')" },
+        "solverReward": { ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() === 0) || newData.val() === data.val() || newData.parent().child('status').val() === 'solved')" },
+        "drawerReward": { ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() === 0) || newData.val() === data.val() || newData.parent().child('status').val() === 'solved')" },
+        "withdrawnAt": { ".validate": "data.exists() ? newData.val() === data.val() : (newData.isNumber() && newData.val() <= now + 60000 && newData.parent().child('status').val() === 'withdrawn')" },
+        "expiredAt": { ".validate": "data.exists() ? newData.val() === data.val() : (newData.isNumber() && newData.val() <= now + 60000 && newData.parent().child('status').val() === 'expired')" },
+        "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() === 0) || newData.val() === data.val())" },
+        "$other": { ".validate": "data.exists() && newData.val() === data.val()" }
       }
     },
+
     "drawingLikes": {
+      ".read": "auth != null",
       "$drawingId": {
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid && root.child('drawings').child($drawingId).child('drawerId').val() !== auth.uid"
+          ".write": "auth != null && auth.uid === $uid && root.child('drawings').child($drawingId).child('drawerId').val() !== auth.uid && (root.child('drawings').child($drawingId).child('status').val() === 'solved' || root.child('drawings').child($drawingId).child('status').val() === 'expired')",
+          ".validate": "!newData.exists() || newData.val() === true"
         }
       }
     },
+
+    "scoreClaims": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+        "$drawingId": {
+          ".write": "auth != null && ((!data.exists() && root.child('drawings').child($drawingId).child('status').val() === 'solved' && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid && (($uid === auth.uid && newData.val() === root.child('drawings').child($drawingId).child('solverReward').val()) || ($uid === root.child('drawings').child($drawingId).child('drawerId').val() && newData.val() === root.child('drawings').child($drawingId).child('drawerReward').val()))) || (data.exists() && newData.val() === data.val() && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid) || (data.exists() && auth.uid === $uid && !newData.exists()))",
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10)"
+        }
+      }
+    },
+
     "userDrawings": {
-      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$drawingId": {
+          ".write": "auth != null && auth.uid === $uid && root.child('drawings').child($drawingId).child('drawerId').val() === auth.uid",
+          ".validate": "newData.val() === true"
+        }
+      }
     },
     "userSolved": {
-      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
-    },
-    "feedbackMeta": {
-      ".read": "auth != null",
-      "$id": {
-        ".write": "auth != null && ((!data.exists() && newData.exists()) || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true || (newData.child('likeCount').isNumber() && newData.child('dislikeCount').isNumber()))",
-        "displayAuthor": { ".validate": "!data.exists() || newData.val() === data.val()" },
-        "isAnonymous": { ".validate": "!data.exists() || newData.val() === data.val()" },
-        "isSecret": { ".validate": "!data.exists() || newData.val() === data.val()" },
-        "hidden": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true" },
-        "deleted": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('feedbackOwners').child($id).child(auth.uid).val() === true" },
-        "status": { ".validate": "!data.exists() || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true" },
-        "likeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "dislikeCount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
-        "popularityScore": { ".validate": "newData.isNumber() && newData.val() === newData.parent().child('likeCount').val() - newData.parent().child('dislikeCount').val()" }
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$drawingId": {
+          ".write": "auth != null && auth.uid === $uid && root.child('drawings').child($drawingId).child('status').val() === 'solved' && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid",
+          ".validate": "newData.val() === true"
+        }
       }
     },
-    "feedbackContent": {
-      "$id": {
-        ".read": "auth != null && (root.child('feedbackMeta').child($id).child('isSecret').val() !== true || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)",
-        ".write": "auth != null && ((!data.exists() && newData.exists()) || root.child('feedbackOwners').child($id).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)"
-      }
-    },
+
     "feedbackOwners": {
-      "$id": {
+      "$feedbackId": {
         "$uid": {
           ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
-          ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true"
+          ".write": "auth != null && auth.uid === $uid && !data.exists() && !data.parent().exists() && !root.child('feedbackMeta').child($feedbackId).exists() && newData.val() === true",
+          ".validate": "newData.val() === true"
         }
       }
     },
     "userFeedback": {
-      "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": "auth != null && auth.uid === $uid" }
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$feedbackId": {
+          ".write": "auth != null && auth.uid === $uid && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true",
+          ".validate": "newData.val() === true"
+        }
+      }
+    },
+    "feedbackMeta": {
+      ".read": "auth != null",
+      "$feedbackId": {
+        ".write": "auth != null && ((!data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && newData.child('status').val() === 'open' && newData.child('hidden').val() === false && newData.child('deleted').val() === false && newData.child('likeCount').val() === 0 && newData.child('dislikeCount').val() === 0 && newData.child('popularityScore').val() === 0) || (data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true) || (data.exists() && root.child('admins').child(auth.uid).val() === true))",
+        ".validate": "newData.hasChildren(['createdAt','updatedAt','isAnonymous','isSecret','displayAuthor','status','hidden','deleted','likeCount','dislikeCount','popularityScore'])",
+        "createdAt": { ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())" },
+        "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "isAnonymous": { ".validate": "newData.isBoolean() && (!data.exists() || newData.val() === data.val())" },
+        "isSecret": { ".validate": "newData.isBoolean() && (!data.exists() || newData.val() === data.val())" },
+        "displayAuthor": { ".validate": "newData.isString() && ((!data.exists() && ((newData.parent().child('isAnonymous').val() === true && newData.val() === '익명') || (newData.parent().child('isAnonymous').val() === false && newData.val() === root.child('users').child(auth.uid).child('nickname').val()))) || newData.val() === data.val())" },
+        "status": { ".validate": "(newData.val() === 'open' || newData.val() === 'answered') && (!data.exists() || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true)" },
+        "hidden": { ".validate": "newData.isBoolean() && ((!data.exists() && newData.val() === false) || newData.val() === data.val() || root.child('admins').child(auth.uid).val() === true)" },
+        "deleted": { ".validate": "newData.isBoolean() && ((!data.exists() && newData.val() === false) || newData.val() === data.val() || (root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && data.val() === false && newData.val() === true))" },
+        "deletedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000 && newData.parent().child('deleted').val() === true && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true" },
+        "likeCount": { ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === 0) || newData.val() === data.val())" },
+        "dislikeCount": { ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === 0) || newData.val() === data.val())" },
+        "popularityScore": { ".validate": "newData.isNumber() && ((!data.exists() && newData.val() === 0) || newData.val() === data.val())" },
+        "$other": { ".validate": "data.exists() && newData.val() === data.val()" }
+      }
+    },
+    "feedbackContent": {
+      "$feedbackId": {
+        ".read": "auth != null && (root.child('feedbackMeta').child($feedbackId).child('isSecret').val() === false || root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)",
+        ".write": "auth != null && ((!data.exists() && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && !newData.child('adminReply').exists() && !newData.child('repliedAt').exists() && !newData.child('repliedBy').exists() && !newData.child('repliedByNickname').exists()) || (data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && newData.child('adminReply').val() === data.child('adminReply').val() && newData.child('repliedAt').val() === data.child('repliedAt').val() && newData.child('repliedBy').val() === data.child('repliedBy').val() && newData.child('repliedByNickname').val() === data.child('repliedByNickname').val()) || (data.exists() && root.child('admins').child(auth.uid).val() === true && newData.child('content').val() === data.child('content').val()))",
+        ".validate": "newData.hasChild('content')",
+        "content": { ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 300" },
+        "adminReply": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 300" },
+        "repliedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "repliedBy": { ".validate": "newData.isString() && newData.val() === auth.uid && root.child('admins').child(auth.uid).val() === true" },
+        "repliedByNickname": { ".validate": "newData.isString() && newData.val() === root.child('users').child(auth.uid).child('nickname').val() && root.child('admins').child(auth.uid).val() === true" },
+        "$other": { ".validate": "data.exists() && newData.val() === data.val()" }
+      }
     },
     "feedbackReactions": {
-      "$id": {
+      ".read": "auth != null",
+      "$feedbackId": {
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid && !root.child('feedbackOwners').child($id).child(auth.uid).exists()",
+          ".write": "auth != null && auth.uid === $uid && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() !== true",
           ".validate": "!newData.exists() || newData.val() === 'like' || newData.val() === 'dislike'"
         }
       }

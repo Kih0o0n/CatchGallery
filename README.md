@@ -13,8 +13,14 @@
 
 ## 관리자 등록
 
-1. 앱에서 닉네임 `admin`과 안전한 비밀번호로 회원가입하거나 Firebase Authentication에 동일한 내부 이메일 계정을 만듭니다.
+1. 앱에서 닉네임 `admin`과 안전한 비밀번호로 회원가입합니다.
 2. Authentication에서 해당 계정의 UID를 확인합니다.
 3. Realtime Database의 `admins/{uid}` 값을 `true`로 저장합니다.
 
-관리자 비밀번호는 코드나 데이터베이스에 저장하지 않습니다. 운영 환경에서는 Firebase App Check도 함께 활성화하는 것을 권장합니다.
+관리자 비밀번호는 코드, README, Database Rules 어디에도 적지 않고 Firebase Authentication에서만 검증합니다.
+
+## 보안 안내
+
+Firebase Web Config는 브라우저 앱에서 사용하는 공개 가능한 프로젝트 식별값입니다. Web Config를 숨기는 대신 `database.rules.json`의 Rules를 반드시 배포하고, 운영 환경에서는 Firebase App Check도 함께 활성화해야 합니다.
+
+게임 점수는 사용자가 `users/{uid}/score`를 직접 수정하지 못하도록 잠겨 있습니다. 정답이 확정된 그림의 보상만 그림별 1회성 `scoreClaims`로 기록되며, 랭킹과 화면 점수는 이 기록을 합산해 계산합니다. 그림과 의견의 좋아요·싫어요 수도 사용자가 수정 가능한 카운터가 아니라 반응 원본에서 계산합니다.

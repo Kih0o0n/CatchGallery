@@ -10,6 +10,8 @@ const count = pattern => [...app.matchAll(pattern)].length;
 assert.equal(count(/^async function submitAnswer/gm), 1, "submitAnswer must have one definition");
 assert.equal(count(/^async function toggleLike/gm), 1, "toggleLike must have one definition");
 assert.equal(count(/^async function toggleFeedbackReaction/gm), 1, "toggleFeedbackReaction must have one definition");
+assert.doesNotMatch(app, /applyLocally/, "compat transactions must use transaction(updateFn, null, false)");
+assert.equal(count(/,null,false\)/g), 5, "five compat transactions must disable local events with the third argument");
 assert.match(app, /slice\(0,30\)/, "ranking must remain limited to 30 users");
 assert.doesNotMatch(app, /users\/\$\{[^}]+\}\/score`\)\.transaction/, "client must not increment users score");
 assert.doesNotMatch(app, /drawings\/\$\{[^}]+\}\/likeCount`\)\.transaction/, "client must not write drawing likeCount");

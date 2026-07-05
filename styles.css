@@ -134,3 +134,32 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .loading { display: grid; place-items: center; min-height: 250px; color: var(--muted); }.loading::before { content: '🎨'; font-size: 45px; animation: bob .8s infinite alternate; }
 @keyframes bob { to { transform: translateY(-8px) rotate(5deg); } }
 @media (min-width: 700px) { body { padding: 24px 0; }.app-shell { min-height: calc(100dvh - 48px); border-radius: 30px; overflow: clip; }.center-screen { min-height: calc(100dvh - 48px); } }
+
+/* drawing scroll-lock hotfix: 캔버스에 그림을 그리는 동안 모바일 페이지 스크롤을 차단 */
+html.drawing-scroll-lock,
+body.drawing-scroll-lock {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: none !important;
+}
+
+body.drawing-scroll-lock {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+}
+
+.draw-screen,
+.canvas-wrap,
+#drawingCanvas {
+  overscroll-behavior: none !important;
+}
+
+.canvas-wrap,
+#drawingCanvas {
+  touch-action: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}

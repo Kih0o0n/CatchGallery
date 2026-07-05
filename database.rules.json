@@ -78,8 +78,12 @@
       "$uid": {
         ".write": "auth != null && auth.uid === $uid && !newData.exists()",
         "$drawingId": {
-          ".write": "auth != null && ((!data.exists() && root.child('drawings').child($drawingId).child('status').val() === 'solved' && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid && (($uid === auth.uid && newData.val() === root.child('drawings').child($drawingId).child('solverReward').val()) || ($uid === root.child('drawings').child($drawingId).child('drawerId').val() && newData.val() === root.child('drawings').child($drawingId).child('drawerReward').val()))) || (data.exists() && newData.val() === data.val() && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid) || (data.exists() && auth.uid === $uid && !newData.exists()))",
-          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10)"
+          ".write": "auth != null && (((!data.exists() || data.isNumber()) && root.child('drawings').child($drawingId).child('status').val() === 'solved' && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid && newData.child('createdAt').val() === root.child('drawings').child($drawingId).child('solvedAt').val() && (($uid === auth.uid && newData.child('type').val() === 'solver' && newData.child('score').val() === root.child('drawings').child($drawingId).child('solverReward').val()) || ($uid === root.child('drawings').child($drawingId).child('drawerId').val() && newData.child('type').val() === 'drawer' && newData.child('score').val() === root.child('drawings').child($drawingId).child('drawerReward').val()))) || (data.hasChildren(['score','type','createdAt']) && newData.child('score').val() === data.child('score').val() && newData.child('type').val() === data.child('type').val() && newData.child('createdAt').val() === data.child('createdAt').val() && root.child('drawings').child($drawingId).child('solverId').val() === auth.uid) || (data.exists() && auth.uid === $uid && !newData.exists()))",
+          ".validate": "newData.hasChildren(['score','type','createdAt'])",
+          "score": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10" },
+          "type": { ".validate": "newData.val() === 'drawer' || newData.val() === 'solver'" },
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
         }
       }
     },

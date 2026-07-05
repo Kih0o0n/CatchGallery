@@ -846,34 +846,68 @@ async function resolveDrawingId(drawingId) {
 async function submitAnswer(drawingId, answer, hintUsed) {
   answer = String(answer || "").trim();
   if (!answer) return { correct: false, message: "정답을 입력해 주세요." };
+
   const resolvedId = await resolveDrawingId(drawingId);
+  const drawingRef = db.ref(`drawings/${resolvedId}`);
+
+  // Firebase Realtime Database transaction의 update 함수는
+  // 해당 경로의 값이 서버에는 있어도 클라이언트 캐시가 비어 있으면
+  // 첫 호출에서 null을 받을 수 있다.
+  // 여기서 바로 return 하면 실제 그림이 있는데도 "그림을 찾을 수 없어요."가 뜨므로,
+  // transaction 전에 한 번 읽어 둔 값을 안전한 fallback으로 사용한다.
+  const beforeSnap = await drawingRef.once("value");
+  const fallbackDrawing = beforeSnap.val();
+  if (!fallbackDrawing) return { correct: false, message: "그림을 찾을 수 없어요." };
+
   const now = serverNow();
   let outcome = { correct: false, message: "아쉽지만 정답이 아니에요." };
   let settledDrawing = null;
-  const result = await db.ref(`drawings/${resolvedId}`).transaction(d => {
+
+  const result = await drawingRef.transaction(current => {
+    const d = current || fallbackDrawing;
     if (!d) { outcome.message = "그림을 찾을 수 없어요."; return; }
+
     if (d.status === "solved" && d.solverId === state.user.id) {
       settledDrawing = d;
       outcome = { correct: true, solverReward: d.solverReward, drawerReward: d.drawerReward };
-      return;
+      return d;
     }
-    if (d.drawerId === state.user.id) { outcome.message = "내 그림은 맞힐 수 없습니다."; return; }
-    if (d.status !== "open" || d.solverId) { outcome.message = "이미 도전이 끝난 그림이에요."; return; }
+
+    if (d.drawerId === state.user.id) { outcome.message = "내 그림은 맞힐 수 없습니다."; return d; }
+    if (d.status !== "open" || d.solverId) { outcome.message = "이미 도전이 끝난 그림이에요."; return d; }
+
     if (Number(d.expiresAt) <= now) {
       outcome.message = "방금 마감된 그림이에요.";
       return { ...d, status: "expired", expiredAt: now, updatedAt: now };
     }
-    if (answer !== String(d.word).trim()) return;
+
+    if (answer !== String(d.word).trim()) return d;
+
     const base = hintUsed ? 6 : 10;
     const drawerReward = Math.max(0, base - (Number(d.revisionCount) || 0) * 2);
     outcome = { correct: true, solverReward: base, drawerReward };
-    return { ...d, status: "solved", solverId: state.user.id, solverNickname: state.user.nickname, solvedAt: now, updatedAt: now, hintUsed: !!hintUsed, solverReward: base, drawerReward };
+
+    return {
+      ...d,
+      status: "solved",
+      solverId: state.user.id,
+      solverNickname: state.user.nickname,
+      solvedAt: now,
+      updatedAt: now,
+      hintUsed: !!hintUsed,
+      solverReward: base,
+      drawerReward
+    };
   }, null, false);
+
   if (settledDrawing) {
     await claimAnswerRewards(resolvedId, settledDrawing);
     return outcome;
   }
-  if (!result.committed || !outcome.correct) return outcome.correct ? { correct: false, message: "다른 사람이 먼저 맞혔어요." } : outcome;
+
+  if (!outcome.correct) return outcome;
+  if (!result.committed) return { correct: false, message: "다른 사람이 먼저 맞혔어요." };
+
   await claimAnswerRewards(resolvedId, result.snapshot.val());
   return outcome;
 }

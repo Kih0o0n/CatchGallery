@@ -9,10 +9,15 @@ const FIREBASE_CONFIG = {
 };
 
 const WORDS = [
-  ["바나나", "음식"], ["김밥", "음식"], ["떡볶이", "음식"], ["수박", "음식"], ["붕어빵", "음식"], ["라면", "음식"], ["딸기", "음식"], ["달걀프라이", "음식"],
-  ["고양이", "동물"], ["강아지", "동물"], ["기린", "동물"], ["토끼", "동물"], ["문어", "동물"], ["펭귄", "동물"], ["달팽이", "동물"], ["공룡", "동물"],
-  ["우산", "물건"], ["안경", "물건"], ["시계", "물건"], ["가방", "물건"], ["연필", "물건"], ["선풍기", "물건"], ["자전거", "탈것"], ["로켓", "탈것"],
-  ["무지개", "자연"], ["구름", "자연"], ["화산", "자연"], ["해바라기", "자연"], ["번개", "자연"], ["눈사람", "겨울"], ["크리스마스트리", "겨울"], ["수영", "운동"]
+  { category: "음식", word: "바나나", answers: ["바나나"] }, { category: "음식", word: "김밥", answers: ["김밥"] }, { category: "음식", word: "떡볶이", answers: ["떡볶이"] }, { category: "음식", word: "수박", answers: ["수박"] },
+  { category: "음식", word: "붕어빵", answers: ["붕어빵"] }, { category: "음식", word: "라면", answers: ["라면"] }, { category: "음식", word: "딸기", answers: ["딸기"] }, { category: "음식", word: "급식", answers: ["급식"] },
+  { category: "동물", word: "고양이", answers: ["고양이"] }, { category: "동물", word: "강아지", answers: ["강아지"] }, { category: "동물", word: "기린", answers: ["기린"] }, { category: "동물", word: "토끼", answers: ["토끼"] },
+  { category: "동물", word: "문어", answers: ["문어"] }, { category: "동물", word: "펭귄", answers: ["펭귄"] }, { category: "동물", word: "달팽이", answers: ["달팽이"] }, { category: "동물", word: "공룡", answers: ["공룡"] }, { category: "동물", word: "용", answers: ["용"] },
+  { category: "물건", word: "우산", answers: ["우산"] }, { category: "물건", word: "안경", answers: ["안경"] }, { category: "물건", word: "시계", answers: ["시계"] }, { category: "물건", word: "가방", answers: ["가방"] },
+  { category: "물건", word: "연필", answers: ["연필"] }, { category: "물건", word: "선풍기", answers: ["선풍기"] }, { category: "물건", word: "로봇", answers: ["로봇"] }, { category: "물건", word: "크리스마스트리", answers: ["크리스마스트리"] },
+  { category: "탈것", word: "자전거", answers: ["자전거"] },
+  { category: "자연", word: "무지개", answers: ["무지개"] }, { category: "자연", word: "구름", answers: ["구름"] }, { category: "자연", word: "화산", answers: ["화산"] }, { category: "자연", word: "해바라기", answers: ["해바라기"] }, { category: "자연", word: "번개", answers: ["번개"] }, { category: "자연", word: "눈사람", answers: ["눈사람"] },
+  { category: "운동과 놀이", word: "수영", answers: ["수영"] }, { category: "운동과 놀이", word: "종이비행기", answers: ["종이비행기"] }
 ];
 
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
@@ -79,8 +84,8 @@ function randomWord() {
   let next;
   do {
     next = WORDS[Math.floor(Math.random() * WORDS.length)];
-  } while (WORDS.length > 1 && state.word?.[0] === next[0]);
-  state.word = [next[0], next[1], [next[0]], false];
+  } while (WORDS.length > 1 && state.word?.word === next.word);
+  state.word = { ...next, answers: [...next.answers], isCustomWord: false };
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
@@ -294,8 +299,8 @@ function renderDraw() {
   const edit = state.editDrawing;
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="8" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
-  const shownAnswers = !edit && state.word[3] && state.word[2]?.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word[2].slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word[1])}</span><div class="word">${escapeHtml(edit?.word || state.word[0])}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "수정할 때마다 최종 보상 -2점" : "누군가 맞혀야 점수를 얻습니다.<br>힌트가 필요한 난해한 그림은 낮은 점수를 얻습니다."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "수정할 때마다 최종 보상 -2점" : "누군가 맞혀야 점수를 얻습니다.<br>힌트가 필요한 난해한 그림은 낮은 점수를 얻습니다."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => {
     document.querySelectorAll(".color").forEach(x => x.classList.remove("selected"));
@@ -334,7 +339,7 @@ function renderDraw() {
       if (rawAnswers.length > 5) return showToast("허용 정답은 최대 5개까지 입력할 수 있어요.");
       if (rawAnswers.some(value => textLength(value) < 1 || textLength(value) > 12)) return showToast("허용 정답은 각각 1~12자로 입력해 주세요.");
       const answers = [word, ...rawAnswers].filter((value, index, list) => list.findIndex(item => normalizeAnswer(item) === normalizeAnswer(value)) === index);
-      state.word = [word, category, answers, true];
+      state.word = { category, word, answers, isCustomWord: true };
       document.querySelector(".word-card .category").textContent = category;
       document.querySelector(".word-card .word").textContent = word;
       document.querySelector(".custom-answer-summary")?.remove();
@@ -481,10 +486,10 @@ async function publishDrawing() {
   const ref = db.ref("drawings").push();
   const id = ref.key;
   const data = {
-    word: state.word[0],
-    category: state.word[1],
-    answers: state.word[2] || [state.word[0]],
-    isCustomWord: !!state.word[3],
+    word: state.word.word,
+    category: state.word.category,
+    answers: state.word.answers,
+    isCustomWord: state.word.isCustomWord,
     imageData: state.canvas.toDataURL("image/png"),
     drawerId: state.user.id,
     drawerNickname: state.user.nickname,
@@ -705,7 +710,7 @@ async function renderManage() {
     document.querySelectorAll("[data-edit]").forEach(button => button.onclick = () => {
       const d = list.find(x => x.id === button.dataset.edit);
       state.editDrawing = d;
-      state.word = [d.word, d.category];
+      state.word = { word: d.word, category: d.category, answers: d.answers || [d.word], isCustomWord: !!d.isCustomWord };
       route("draw");
     });
     document.querySelectorAll("[data-withdraw]").forEach(button => button.onclick = () => confirmModal("정말 이 그림을 회수할까요?", "회수한 그림은 복구할 수 없고,\n전시장에도 전시되지 않습니다.", async () => {

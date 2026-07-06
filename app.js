@@ -565,7 +565,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.2</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.3</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -844,9 +844,9 @@ async function renderSolve() {
       try {
         const result = await submitAnswer(id, input.value, !!state.hintUsed[id]);
         if (result.correct) {
-          showToast(result.solverReward > 0 ? `정답이에요! +${result.solverReward}점 · 그림을 그린 친구도 +30점!` : "정답이에요! 이번에는 랭킹 점수가 쉬어가고, 그림을 그린 친구는 +30점!");
           await loadCurrentUser();
           renderSolve();
+          showAnswerSuccessModal(result);
         } else {
           showToast(result.message);
           input.select();
@@ -1184,6 +1184,20 @@ function confirmModal(title, message, onConfirm) {
   };
 }
 
+function showAnswerSuccessModal(result) {
+  const root = document.querySelector("#modalRoot");
+  const scoreMessage = Number(result.solverReward) > 0
+    ? `풀이 점수 +${Number(result.solverReward)}점`
+    : "이번에는 랭킹 점수가 오르지 않아요.";
+  root.innerHTML = `<div class="modal-backdrop answer-success-backdrop"><div class="modal answer-success-modal" role="dialog" aria-modal="true" aria-labelledby="answerSuccessTitle"><div class="success-sparkles" aria-hidden="true">✨ 🎉 ✨</div><h3 id="answerSuccessTitle">정답입니다 🎉</h3><p class="success-drawer">이 그림은 <b>${escapeHtml(result.drawerNickname || "알 수 없는 친구")}</b>님이 그렸어요!</p><p class="success-score">${scoreMessage}</p><p class="success-reward">그린 사람에게도 +30점이 들어갔어요!</p><button class="button primary full" data-success-close>계속 둘러보기</button></div></div>`;
+  const close = () => { root.innerHTML = ""; document.removeEventListener("keydown", onKeydown); };
+  const onKeydown = event => { if (event.key === "Escape") close(); };
+  root.querySelector("[data-success-close]").onclick = close;
+  root.querySelector(".answer-success-backdrop").onclick = event => { if (event.target === event.currentTarget) close(); };
+  document.addEventListener("keydown", onKeydown);
+  root.querySelector("[data-success-close]").focus();
+}
+
 async function claimAnswerRewards(drawingId, drawing) {
   const createdAt = Number(drawing.solvedAt) || serverNow();
   await db.ref().update({
@@ -1232,7 +1246,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
     if (d.status === "solved" && d.solverId === state.user.id) {
       settledDrawing = d;
-      outcome = { correct: true, solverReward: d.solverReward, drawerReward: d.drawerReward };
+      outcome = { correct: true, solverReward: d.solverReward, drawerReward: d.drawerReward, drawerNickname: drawerName(d) };
       return;
     }
 
@@ -1249,7 +1263,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return;
 
     const drawerReward = 30;
-    outcome = { correct: true, solverReward, drawerReward };
+    outcome = { correct: true, solverReward, drawerReward, drawerNickname: drawerName(d) };
 
     const solvedUpdate = {
       ...d,

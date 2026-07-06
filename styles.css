@@ -163,6 +163,15 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .modal { width: min(100%, 420px); border-radius: 24px; background: white; padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.2); animation: pop .18s ease-out; }
 @keyframes pop { from { transform: scale(.94); opacity: .4; } }
 .modal p { white-space: pre-line; line-height: 1.6; }
+.answer-success-modal { text-align: center; overflow: hidden; animation: successPop .28s cubic-bezier(.2,.9,.3,1.25); }
+.answer-success-modal h3 { margin: 3px 0 12px; font-size: 27px; }
+.success-sparkles { font-size: 23px; letter-spacing: 5px; animation: sparkle .75s ease-in-out 2 alternate; }
+.answer-success-modal p { margin: 7px 0; }
+.success-score { display: inline-block; padding: 8px 14px; border-radius: 999px; background: #fff4ca; color: #9a6517; font-weight: 800; }
+.success-reward { color: #5b8b70; font-size: 14px; }
+.answer-success-modal .button { margin-top: 12px; }
+@keyframes successPop { from { transform: scale(.86) translateY(10px); opacity: 0; } }
+@keyframes sparkle { to { transform: translateY(-3px) scale(1.08); filter: brightness(1.08); } }
 .loading { display: grid; place-items: center; min-height: 250px; color: var(--muted); }.loading::before { content: '🎨'; font-size: 45px; animation: bob .8s infinite alternate; }
 @keyframes bob { to { transform: translateY(-8px) rotate(5deg); } }
 @media (min-width: 700px) { body { padding: 24px 0; }.app-shell { min-height: calc(100dvh - 48px); border-radius: 30px; overflow: clip; }.center-screen { min-height: calc(100dvh - 48px); } }

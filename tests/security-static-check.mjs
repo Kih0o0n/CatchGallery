@@ -26,6 +26,9 @@ assert.match(app, /function isOwnDrawing\(d\)/, "drawing ownership checks must b
 assert.match(app, /name === "gallery" && state\.route !== "gallery"[\s\S]{0,120}state\.galleryView = "thumb"/, "gallery entry must reset to thumbnail view");
 assert.match(app, /data-view="thumb"[\s\S]{0,250}data-view="frame"/, "thumbnail view control must precede frame view control");
 assert.match(styles, /\.gallery-screen \.frame-image[^}]+height:\s*min\(42dvh, 420px\)/, "gallery frame image must fit mobile height");
+assert.match(app, /function showAnswerSuccessModal\(result\)/, "answer success modal must exist");
+assert.match(app, /정답입니다 🎉/, "answer success modal must show its title");
+assert.match(app, /drawerNickname: drawerName\(d\)/, "answer result must include the drawer name");
 assert.match(app, /slice\(0,\s*30\)/, "ranking must remain limited to 30 users");
 assert.doesNotMatch(app, /예: 기훈/);
 assert.match(app, /평소 쓰는 비밀번호를 사용하지 마세요\./);

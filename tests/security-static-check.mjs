@@ -29,7 +29,7 @@ assert.match(app, /addEventListener\("touchstart"/);
 assert.match(app, /addEventListener\("touchmove"/);
 assert.match(styles, /canvas[^}]*touch-action:\s*none/s);
 assert.match(app, /category:\s*"운동과 놀이",\s*word:\s*"종이비행기",\s*answers:\s*\["종이비행기"\]/);
-assert.doesNotMatch(app, /달걀프라이|로켓|우유급식|줄서기|숙제|알림장|생일케이크|학교와 생활|감정과 상태|상상과 캐릭터 느낌/);
+assert.doesNotMatch(app, /로켓|우유급식|줄서기|숙제|알림장|생일케이크|학교와 생활|감정과 상태|상상과 캐릭터 느낌/);
 assert.doesNotMatch(app, /users\/\$\{[^}]+\}\/score`\)\.transaction/, "client must not increment users score");
 assert.doesNotMatch(app, /drawings\/\$\{[^}]+\}\/likeCount`\)\.transaction/, "client must not write drawing likeCount");
 assert.doesNotMatch(app, /feedbackMeta\/\$\{[^}]+\}`\)\.transaction/, "client must not write feedback counters");

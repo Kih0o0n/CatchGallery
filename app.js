@@ -777,7 +777,7 @@ async function renderSolve() {
 }
 function openDrawingCard(d) {
   const mine = d.drawerId === state.user.id;
-  return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}">카테고리 힌트 보기</button><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+  return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}">카테고리 힌트 보기 (-4점)</button><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 async function updateDrawing(drawingId) {
   const imageData = state.canvas.toDataURL("image/png");
@@ -1117,11 +1117,11 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     if (d.status === "solved" && d.solverId === state.user.id) {
       settledDrawing = d;
       outcome = { correct: true, solverReward: d.solverReward, drawerReward: d.drawerReward };
-      return d;
+      return;
     }
 
-    if (d.drawerId === state.user.id) { outcome.message = "내 그림은 맞힐 수 없습니다."; return d; }
-    if (d.status !== "open" || d.solverId) { outcome.message = "이미 도전이 끝난 그림이에요."; return d; }
+    if (d.drawerId === state.user.id) { outcome.message = "내 그림은 맞힐 수 없습니다."; return; }
+    if (d.status !== "open" || d.solverId) { outcome.message = "이미 도전이 끝난 그림이에요."; return; }
 
     if (Number(d.expiresAt) <= now) {
       outcome.message = "방금 마감된 그림이에요.";
@@ -1130,7 +1130,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
     const storedAnswers = Array.isArray(d.answers) ? d.answers : Object.values(safeObject(d.answers));
     const acceptedAnswers = [d.word, ...storedAnswers];
-    if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return d;
+    if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return;
 
     const base = hintUsed ? 6 : 10;
     const drawerReward = Math.max(0, base - (Number(d.revisionCount) || 0) * 2);
@@ -1138,6 +1138,10 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
     return {
       ...d,
+      revisionCount: Number(d.revisionCount) || 0,
+      likeCount: Number(d.likeCount) || 0,
+      answers: storedAnswers.length ? storedAnswers : [d.word],
+      isCustomWord: typeof d.isCustomWord === "boolean" ? d.isCustomWord : false,
       status: "solved",
       solverId: state.user.id,
       solverNickname: state.user.nickname,

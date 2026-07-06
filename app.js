@@ -1136,12 +1136,10 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     const drawerReward = Math.max(0, base - (Number(d.revisionCount) || 0) * 2);
     outcome = { correct: true, solverReward: base, drawerReward };
 
-    return {
+    const solvedUpdate = {
       ...d,
       revisionCount: Number(d.revisionCount) || 0,
       likeCount: Number(d.likeCount) || 0,
-      answers: storedAnswers.length ? storedAnswers : [d.word],
-      isCustomWord: typeof d.isCustomWord === "boolean" ? d.isCustomWord : false,
       status: "solved",
       solverId: state.user.id,
       solverNickname: state.user.nickname,
@@ -1151,6 +1149,10 @@ async function submitAnswer(drawingId, answer, hintUsed) {
       solverReward: base,
       drawerReward
     };
+
+    if (!d.answers) solvedUpdate.answers = [d.word];
+    if (typeof d.isCustomWord !== "boolean") solvedUpdate.isCustomWord = false;
+    return solvedUpdate;
   }, null, false);
 
   if (settledDrawing) {

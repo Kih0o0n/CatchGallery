@@ -64,6 +64,7 @@ input:focus, select:focus { border-color: var(--pink); box-shadow: 0 0 0 4px rgb
 .sub-action span { display: block; font-size: 25px; margin-bottom: 4px; }
 .feedback-menu { grid-column: 1 / -1; }
 .logout-button { margin-top: 15px; }
+.home-version { margin: 9px 2px -12px; color: #aaa3ad; font-size: 11px; line-height: 1; text-align: right; }
 .section-head { display: flex; justify-content: space-between; align-items: end; gap: 10px; margin-bottom: 16px; }
 .section-head h2 { margin: 0; }
 .word-card { text-align: center; background: linear-gradient(140deg, #fff, #fff2e8); }

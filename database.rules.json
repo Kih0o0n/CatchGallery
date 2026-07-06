@@ -43,10 +43,16 @@
         "word": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12 && (!data.exists() || newData.val() === data.val())" },
         "category": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8 && (!data.exists() || newData.val() === data.val())" },
         "answers": {
-          ".validate": "newData.hasChild('0') && (!data.exists() || newData.val() === data.val())",
-          "$index": { ".validate": "$index.matches(/^(0|1|2|3|4|5)$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 12" }
+          ".validate": "newData.hasChild('0') && (!data.parent().exists() || newData.val() === data.val() || (!data.exists() && newData.parent().child('status').val() === 'solved'))",
+          "0": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "1": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "2": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "3": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "4": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "5": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+          "$other": { ".validate": false }
         },
-        "isCustomWord": { ".validate": "newData.isBoolean() && (!data.exists() || newData.val() === data.val())" },
+        "isCustomWord": { ".validate": "newData.isBoolean() && (!data.parent().exists() || newData.val() === data.val() || (!data.exists() && newData.val() === false && newData.parent().child('status').val() === 'solved'))" },
         "drawerId": { ".validate": "newData.isString() && ((!data.exists() && newData.val() === auth.uid) || newData.val() === data.val())" },
         "drawerNickname": { ".validate": "newData.isString() && ((!data.exists() && newData.val() === root.child('users').child(auth.uid).child('nickname').val()) || newData.val() === data.val())" },
         "createdAt": { ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())" },

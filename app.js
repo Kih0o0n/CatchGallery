@@ -270,6 +270,13 @@ function showToast(message) {
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => el.classList.remove("show"), 2400);
 }
+function userErrorMessage(error, fallback = "잠시 후 다시 시도해 주세요.") {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "");
+  if (/network|offline|timeout|unavailable/i.test(`${code} ${message}`)) return "인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
+  if (/permission[-_ ]?denied|FirebaseError|transaction/i.test(`${code} ${message}`)) return fallback;
+  return message || fallback;
+}
 function loading() { appEl.innerHTML = '<div class="loading" aria-label="불러오는 중"></div>'; }
 function formatTime(expiresAt) {
   const ms = Number(expiresAt) - serverNow();
@@ -318,6 +325,7 @@ function internalEmail(value) { return `${nicknameKey(value)}@catchgallery.app`;
 function validateCredentials(nickname, password) {
   const name = normalizeNickname(nickname);
   if (!name || name.length > 8) throw new Error("닉네임은 1~8글자로 입력해 주세요.");
+  if (!String(password || "").trim()) throw new Error("비밀번호를 입력해 주세요.");
   if (password.length < 6) throw new Error("비밀번호는 6자 이상 입력해 주세요.");
   return name;
 }
@@ -414,7 +422,7 @@ async function boot() {
       }
     } catch (error) {
       console.error(error);
-      showToast(error.message);
+      showToast(userErrorMessage(error));
     }
     state.authReady = true;
     const initial = state.user ? (location.hash.slice(1) || "home") : "login";
@@ -470,13 +478,14 @@ function renderLogin() {
   nameInput.value = localStorage.getItem("catchGalleryNickname") || "";
   form.addEventListener("submit", async event => {
     event.preventDefault();
+    if (loginButton.disabled) return;
     loginButton.disabled = signupButton.disabled = true;
     loginButton.textContent = "로그인 중…";
     try {
       await signIn(nameInput.value, passwordInput.value);
       route("home");
     } catch (error) {
-      showToast(error.message);
+      showToast(userErrorMessage(error, "로그인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."));
     } finally {
       loginButton.disabled = signupButton.disabled = false;
       loginButton.textContent = "로그인";
@@ -503,6 +512,7 @@ function openSignupModal() {
   document.addEventListener("keydown", onKeydown);
   form.onsubmit = async event => {
     event.preventDefault();
+    if (completeButton.disabled) return;
     if (password.value !== passwordConfirm.value) {
       showToast("비밀번호가 서로 달라요. 다시 확인해 주세요.");
       passwordConfirm.focus();
@@ -515,7 +525,7 @@ function openSignupModal() {
       close();
       route("home");
     } catch (error) {
-      showToast(error.message);
+      showToast(userErrorMessage(error, "회원가입 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."));
       completeButton.disabled = false;
       completeButton.textContent = "회원가입 완료";
     }
@@ -524,8 +534,15 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.0</div></section>`;
-  document.querySelector("#logoutButton").onclick = signOut;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.1</div></section>`;
+  document.querySelector("#logoutButton").onclick = async event => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = "로그아웃 중…";
+    try { await signOut(); }
+    catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = "로그아웃"; }
+  };
 }
 
 function renderDraw() {
@@ -585,6 +602,7 @@ function renderDraw() {
     };
   }
   saveDrawing.onclick = async () => {
+    if (state.publishing) return;
     if (!state.dirty) {
       showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
       return;
@@ -599,7 +617,7 @@ function renderDraw() {
       showToast(edit ? "수정했어요!" : "그림을 게시했어요!");
       route("manage");
     } catch (error) {
-      showToast(error.message);
+      showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
       saveDrawing.disabled = false;
       saveDrawing.textContent = edit ? "수정 저장하기" : "게시하기";
     } finally {
@@ -786,7 +804,10 @@ async function renderSolve() {
       const id = form.dataset.answerForm;
       const button = form.querySelector("button");
       const input = form.querySelector("input");
+      if (button.disabled) return;
+      const originalText = button.textContent;
       button.disabled = true;
+      button.textContent = "확인 중…";
       try {
         const result = await submitAnswer(id, input.value, !!state.hintUsed[id]);
         if (result.correct) {
@@ -797,6 +818,7 @@ async function renderSolve() {
           showToast(result.message);
           input.select();
           button.disabled = false;
+          button.textContent = originalText;
         }
       } catch (error) {
         console.error("정답 확인 중 오류:", error);
@@ -805,6 +827,7 @@ async function renderSolve() {
           ? "권한 확인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."
           : "정답 확인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
         button.disabled = false;
+        button.textContent = originalText;
       }
     });
   } catch (error) {
@@ -878,9 +901,13 @@ function bindGallery(list) {
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
   document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => { state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame"; renderGallery(); });
   document.querySelector("[data-like]")?.addEventListener("click", async e => {
-    e.currentTarget.disabled = true;
-    try { await toggleLike(e.currentTarget.dataset.like); renderGallery(); }
-    catch (error) { showToast(error.message); e.currentTarget.disabled = false; }
+    const button = e.currentTarget;
+    if (button.disabled) return;
+    const original = button.innerHTML;
+    button.disabled = true;
+    button.textContent = "처리 중…";
+    try { await toggleLike(button.dataset.like); renderGallery(); }
+    catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.innerHTML = original; }
   });
 }
 
@@ -1058,8 +1085,11 @@ function bindFeedback(list) {
   form.onsubmit = async event => {
     event.preventDefault();
     const button = event.submitter;
+    if (!button || button.disabled) return;
     const content = document.querySelector("#feedbackText").value;
+    const originalText = button.textContent;
     button.disabled = true;
+    button.textContent = state.editingFeedback ? "저장 중…" : "보내는 중…";
     try {
       if (state.editingFeedback) await updateFeedback(state.editingFeedback.id, content);
       else await submitFeedback(content, document.querySelector("#anonymousCheck").checked, document.querySelector("#secretCheck").checked);
@@ -1067,18 +1097,19 @@ function bindFeedback(list) {
       showToast("의견을 저장했어요.");
       renderFeedback();
     } catch (error) {
-      showToast(error.message);
+      showToast(userErrorMessage(error, "의견을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
       button.disabled = false;
+      button.textContent = originalText;
     }
   };
   document.querySelector("#cancelFeedbackEdit")?.addEventListener("click", () => { state.editingFeedback = null; renderFeedback(); });
   document.querySelectorAll("[data-feedback-view]").forEach(button => button.onclick = () => { state.feedbackView = button.dataset.feedbackView; state.editingFeedback = null; renderFeedback(); });
   document.querySelectorAll("[data-feedback-sort]").forEach(button => button.onclick = () => { state.feedbackSort = button.dataset.feedbackSort; renderFeedback(); });
-  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => { button.disabled = true; try { await toggleFeedbackReaction(button.dataset.id, button.dataset.react); renderFeedback(); } catch (error) { showToast(error.message); button.disabled = false; } });
+  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackReaction(button.dataset.id, button.dataset.react); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
   document.querySelectorAll("[data-edit-feedback]").forEach(button => button.onclick = () => { const feedback = list.find(item => item.id === button.dataset.editFeedback); state.editingFeedback = { id: feedback.id, content: feedback.content?.content || "" }; renderFeedback(); });
-  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("의견을 삭제할까요?", "삭제한 의견은 목록에서 보이지 않습니다.", async () => { await deleteFeedback(button.dataset.deleteFeedback); showToast("의견을 삭제했어요."); renderFeedback(); }));
-  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => { button.disabled = true; try { await saveAdminReply(button.dataset.adminReply, document.querySelector(`[data-reply-text="${button.dataset.adminReply}"]`).value); showToast("답변을 저장했어요."); renderFeedback(); } catch (error) { showToast(error.message); button.disabled = false; } });
-  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => { button.disabled = true; try { await toggleFeedbackHidden(button.dataset.adminHide, button.dataset.hidden !== "true"); renderFeedback(); } catch (error) { showToast(error.message); button.disabled = false; } });
+  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => { await deleteFeedback(button.dataset.deleteFeedback); showToast("의견을 삭제했어요."); renderFeedback(); }));
+  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "저장 중…"; try { await saveAdminReply(button.dataset.adminReply, document.querySelector(`[data-reply-text="${button.dataset.adminReply}"]`).value); showToast("답변을 저장했어요."); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
+  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackHidden(button.dataset.adminHide, button.dataset.hidden !== "true"); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
 }
 
 function renderGuide() {
@@ -1102,9 +1133,13 @@ function confirmModal(title, message, onConfirm) {
   root.innerHTML = `<div class="modal-backdrop"><div class="modal"><h3>${title}</h3><p>${message}</p><div class="button-row"><button class="button ghost" data-cancel>취소</button><button class="button danger" data-confirm>확인</button></div></div></div>`;
   root.querySelector("[data-cancel]").onclick = () => root.innerHTML = "";
   root.querySelector("[data-confirm]").onclick = async event => {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "처리 중…";
     try { await onConfirm(); root.innerHTML = ""; }
-    catch (error) { showToast(error.message); event.currentTarget.disabled = false; }
+    catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; }
   };
 }
 

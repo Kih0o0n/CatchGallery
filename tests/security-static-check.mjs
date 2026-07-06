@@ -6,6 +6,12 @@ const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8"
 const rulesText = fs.readFileSync(new URL("../database.rules.json", import.meta.url), "utf8");
 const rules = JSON.parse(rulesText).rules;
 
+assert.doesNotMatch(rulesText, /\.numChildren\s*\(/, "Realtime Database Rules must not use unsupported numChildren()");
+const supportedRuleMethods = new Set(["child", "exists", "hasChild", "hasChildren", "isBoolean", "isNumber", "isString", "matches", "parent", "val"]);
+for (const match of rulesText.matchAll(/\.([A-Za-z][A-Za-z0-9_]*)\(/g)) {
+  assert.ok(supportedRuleMethods.has(match[1]), `unsupported Realtime Database Rules method: ${match[1]}()`);
+}
+
 const count = pattern => [...app.matchAll(pattern)].length;
 
 assert.equal(count(/^async function submitAnswer/gm), 1, "submitAnswer must have one definition");

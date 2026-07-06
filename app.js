@@ -461,29 +461,66 @@ function renderRoute() {
   (routes[state.route] || renderHome)();
 }
 function renderLogin() {
-  appEl.innerHTML = `<section class="screen center-screen"><div class="welcome-art">🖼️</div><div style="text-align:center"><h1>캐치갤러리</h1><p class="subtitle">닉네임과 비밀번호로 시작해요!</p></div><form id="loginForm" class="card"><label class="field-label" for="nickname">닉네임</label><input id="nickname" maxlength="8" autocomplete="username" placeholder="닉네임 입력" required><label class="field-label" for="password">비밀번호</label><input id="password" type="password" minlength="6" autocomplete="current-password" placeholder="6자 이상" required><p class="password-warning">평소 쓰는 비밀번호를 사용하지 마세요.</p><p class="helper">같은 닉네임과 비밀번호로 다른 기기에서도 기록을 이어갈 수 있습니다.</p><div class="button-row"><button id="loginButton" class="button primary" type="submit">로그인</button><button id="signupButton" class="button secondary" type="button">회원가입</button></div></form></section>`;
+  appEl.innerHTML = `<section class="screen center-screen"><div class="welcome-art">🖼️</div><div style="text-align:center"><h1>캐치갤러리</h1><p class="subtitle">닉네임과 비밀번호로 로그인해요!</p></div><form id="loginForm" class="card"><label class="field-label" for="nickname">닉네임</label><input id="nickname" maxlength="8" autocomplete="username" placeholder="닉네임 입력" required><label class="field-label" for="password">비밀번호</label><input id="password" type="password" minlength="6" autocomplete="current-password" placeholder="6자 이상" required><p class="password-warning">평소 쓰는 비밀번호를 사용하지 마세요.</p><p class="helper">같은 닉네임과 비밀번호로 다른 기기에서도 기록을 이어갈 수 있습니다.</p><div class="login-actions"><button id="loginButton" class="button primary full" type="submit">로그인</button><button id="signupButton" class="button ghost signup-open-button" type="button">처음이신가요? 회원가입</button></div></form></section>`;
   const form = document.querySelector("#loginForm");
   const nameInput = document.querySelector("#nickname");
+  const passwordInput = document.querySelector("#password");
   const loginButton = document.querySelector("#loginButton");
   const signupButton = document.querySelector("#signupButton");
   nameInput.value = localStorage.getItem("catchGalleryNickname") || "";
-  const submit = async mode => {
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
     loginButton.disabled = signupButton.disabled = true;
-    const active = mode === "login" ? loginButton : signupButton;
-    const original = active.textContent;
-    active.textContent = "처리 중…";
+    loginButton.textContent = "로그인 중…";
     try {
-      mode === "login" ? await signIn(nameInput.value, password.value) : await signUp(nameInput.value, password.value);
+      await signIn(nameInput.value, passwordInput.value);
       route("home");
     } catch (error) {
       showToast(error.message);
     } finally {
       loginButton.disabled = signupButton.disabled = false;
-      active.textContent = original;
+      loginButton.textContent = "로그인";
+    }
+  });
+  signupButton.onclick = openSignupModal;
+}
+function openSignupModal() {
+  const root = document.querySelector("#modalRoot");
+  root.innerHTML = `<div class="modal-backdrop signup-backdrop"><div class="modal signup-modal" role="dialog" aria-modal="true" aria-labelledby="signupTitle"><h3 id="signupTitle">회원가입</h3><form id="signupForm"><label class="field-label" for="signupNickname">닉네임</label><input id="signupNickname" maxlength="8" autocomplete="username" placeholder="닉네임 입력" required><label class="field-label" for="signupPassword">비밀번호</label><input id="signupPassword" type="password" minlength="6" autocomplete="new-password" placeholder="6자 이상" required><label class="field-label" for="signupPasswordConfirm">비밀번호 확인</label><input id="signupPasswordConfirm" type="password" minlength="6" autocomplete="new-password" placeholder="비밀번호 다시 입력" required><p class="password-warning">자주 쓰는 비밀번호는 사용하지 마세요.</p><div class="button-row"><button class="button ghost" type="button" data-signup-cancel>취소</button><button id="signupCompleteButton" class="button primary" type="submit">회원가입 완료</button></div></form></div></div>`;
+  const form = root.querySelector("#signupForm");
+  const nickname = root.querySelector("#signupNickname");
+  const password = root.querySelector("#signupPassword");
+  const passwordConfirm = root.querySelector("#signupPasswordConfirm");
+  const completeButton = root.querySelector("#signupCompleteButton");
+  const close = () => {
+    document.removeEventListener("keydown", onKeydown);
+    root.innerHTML = "";
+    document.querySelector("#signupButton")?.focus();
+  };
+  const onKeydown = event => { if (event.key === "Escape") close(); };
+  root.querySelector("[data-signup-cancel]").onclick = close;
+  root.querySelector(".signup-backdrop").onclick = event => { if (event.target === event.currentTarget) close(); };
+  document.addEventListener("keydown", onKeydown);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    if (password.value !== passwordConfirm.value) {
+      showToast("비밀번호가 서로 달라요. 다시 확인해 주세요.");
+      passwordConfirm.focus();
+      return;
+    }
+    completeButton.disabled = true;
+    completeButton.textContent = "가입하는 중…";
+    try {
+      await signUp(nickname.value, password.value);
+      close();
+      route("home");
+    } catch (error) {
+      showToast(error.message);
+      completeButton.disabled = false;
+      completeButton.textContent = "회원가입 완료";
     }
   };
-  form.addEventListener("submit", event => { event.preventDefault(); submit("login"); });
-  signupButton.onclick = () => submit("signup");
+  nickname.focus();
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;

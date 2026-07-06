@@ -29,7 +29,7 @@ const state = {
   word: null,
   hintUsed: {},
   galleryTab: "solved",
-  galleryView: "frame",
+  galleryView: "thumb",
   gallerySort: "new",
   galleryIndex: 0,
   manageStatus: "open",
@@ -80,8 +80,10 @@ function randomWord() {
   do {
     next = WORDS[Math.floor(Math.random() * WORDS.length)];
   } while (WORDS.length > 1 && state.word?.[0] === next[0]);
-  state.word = next;
+  state.word = [next[0], next[1], [next[0]], false];
 }
+function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
+function textLength(value) { return Array.from(value).length; }
 function isConfigured() {
   if (initFirebase()) return true;
   showToast("Firebase 설정을 먼저 연결해 주세요.");
@@ -290,7 +292,10 @@ function renderHome() {
 function renderDraw() {
   if (!state.word) randomWord();
   const edit = state.editDrawing;
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${edit ? "" : '<button id="nextWord" class="button ghost">다른 제시어</button>'}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word[1])}</span><div class="word">${escapeHtml(edit?.word || state.word[0])}</div></div><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button></div><button id="clearCanvas" class="button ghost full" style="margin-top:8px">전체 지우기</button></div><div class="notice">${edit ? "수정할 때마다 최종 보상 -2점" : "누군가 맞혀야 점수를 얻습니다.<br>힌트가 필요한 난해한 그림은 낮은 점수를 얻습니다."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
+  const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="8" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
+  const shownAnswers = !edit && state.word[3] && state.word[2]?.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word[2].slice(1).map(escapeHtml).join(", ")}</small>` : "";
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word[1])}</span><div class="word">${escapeHtml(edit?.word || state.word[0])}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "수정할 때마다 최종 보상 -2점" : "누군가 맞혀야 점수를 얻습니다.<br>힌트가 필요한 난해한 그림은 낮은 점수를 얻습니다."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => {
     document.querySelectorAll(".color").forEach(x => x.classList.remove("selected"));
@@ -306,6 +311,40 @@ function renderDraw() {
     randomWord();
     renderDraw();
   };
+  if (!edit) {
+    customWordButton.onclick = () => {
+      const opening = customWordForm.classList.contains("hidden");
+      customWordForm.classList.toggle("hidden", !opening);
+      document.querySelector(".draw-screen").classList.toggle("custom-word-open", opening);
+      customWordButton.setAttribute("aria-expanded", String(opening));
+      if (opening) customCategory.focus();
+    };
+    answerHelpButton.onclick = () => {
+      const opening = answerHelp.classList.contains("hidden");
+      answerHelp.classList.toggle("hidden", !opening);
+      answerHelpButton.setAttribute("aria-expanded", String(opening));
+    };
+    customWordForm.onsubmit = event => {
+      event.preventDefault();
+      const category = customCategory.value.trim();
+      const word = customWord.value.trim();
+      const rawAnswers = customAnswers.value.split(",").map(value => value.trim()).filter(Boolean);
+      if (textLength(category) < 1 || textLength(category) > 8) return showToast("카테고리는 1~8자로 입력해 주세요.");
+      if (textLength(word) < 1 || textLength(word) > 12) return showToast("제시어는 1~12자로 입력해 주세요.");
+      if (rawAnswers.length > 5) return showToast("허용 정답은 최대 5개까지 입력할 수 있어요.");
+      if (rawAnswers.some(value => textLength(value) < 1 || textLength(value) > 12)) return showToast("허용 정답은 각각 1~12자로 입력해 주세요.");
+      const answers = [word, ...rawAnswers].filter((value, index, list) => list.findIndex(item => normalizeAnswer(item) === normalizeAnswer(value)) === index);
+      state.word = [word, category, answers, true];
+      document.querySelector(".word-card .category").textContent = category;
+      document.querySelector(".word-card .word").textContent = word;
+      document.querySelector(".custom-answer-summary")?.remove();
+      if (answers.length > 1) document.querySelector(".word-card").insertAdjacentHTML("beforeend", `<small class="custom-answer-summary">허용 정답: ${answers.slice(1).map(escapeHtml).join(", ")}</small>`);
+      customWordForm.classList.add("hidden");
+      document.querySelector(".draw-screen").classList.remove("custom-word-open");
+      customWordButton.setAttribute("aria-expanded", "false");
+      showToast("직접 제시어를 적용했어요!");
+    };
+  }
   saveDrawing.onclick = async () => {
     if (!state.dirty) {
       showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
@@ -444,6 +483,8 @@ async function publishDrawing() {
   const data = {
     word: state.word[0],
     category: state.word[1],
+    answers: state.word[2] || [state.word[0]],
+    isCustomWord: !!state.word[3],
     imageData: state.canvas.toDataURL("image/png"),
     drawerId: state.user.id,
     drawerNickname: state.user.nickname,
@@ -519,7 +560,11 @@ async function renderSolve() {
           button.disabled = false;
         }
       } catch (error) {
-        showToast(error.message);
+        console.error("정답 확인 중 오류:", error);
+        const permissionError = /permission[-_ ]?denied/i.test(`${error?.code || ""} ${error?.message || ""}`);
+        showToast(permissionError
+          ? "권한 확인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."
+          : "정답 확인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
         button.disabled = false;
       }
     });
@@ -881,7 +926,9 @@ async function submitAnswer(drawingId, answer, hintUsed) {
       return { ...d, status: "expired", expiredAt: now, updatedAt: now };
     }
 
-    if (answer !== String(d.word).trim()) return d;
+    const storedAnswers = Array.isArray(d.answers) ? d.answers : Object.values(safeObject(d.answers));
+    const acceptedAnswers = [d.word, ...storedAnswers];
+    if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return d;
 
     const base = hintUsed ? 6 : 10;
     const drawerReward = Math.max(0, base - (Number(d.revisionCount) || 0) * 2);

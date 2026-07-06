@@ -69,6 +69,15 @@ input:focus, select:focus { border-color: var(--pink); box-shadow: 0 0 0 4px rgb
 .word-card { text-align: center; background: linear-gradient(140deg, #fff, #fff2e8); }
 .word { font: 35px Jua, sans-serif; color: #e2677e; margin: 6px 0; }
 .category { display: inline-block; padding: 5px 11px; border-radius: 999px; background: var(--yellow); }
+.word-actions { display: flex; gap: 6px; }
+.custom-word-form { margin: -5px 0 10px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.96); box-shadow: var(--shadow); }
+.custom-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.custom-word-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 700; }
+.custom-word-form input { padding: 9px 10px; border-radius: 11px; font-size: 14px; }
+.answer-label { margin: 8px 0; }
+.answer-help-button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: var(--lavender); font-weight: 700; }
+.answer-help { margin: -2px 0 8px; padding: 9px 10px; border-radius: 11px; background: #f7f2ff; color: #65548a; font-size: 12px; line-height: 1.45; }
+.custom-answer-summary { display: block; color: var(--muted); font-size: 11px; }
 .canvas-wrap { background: white; border: 3px solid #eadfd9; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); aspect-ratio: 1/1; touch-action: none; overscroll-behavior: contain; }
 canvas { display: block; width: 100%; height: 100%; touch-action: none; overscroll-behavior: contain; background: white; }
 .tools { margin: 12px 0; }
@@ -162,4 +171,42 @@ body.drawing-scroll-lock {
   -webkit-user-select: none !important;
   user-select: none !important;
   -webkit-touch-callout: none !important;
+}
+
+@media (max-width: 699px) {
+  .draw-screen {
+    height: calc(100dvh - 61px);
+    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .draw-screen .section-head { align-items: center; margin: 0; min-height: 38px; }
+  .draw-screen .section-head h2 { font-size: 22px; }
+  .draw-screen .section-head .muted { display: none; }
+  .draw-screen .section-head .button { min-height: 38px; padding: 7px 11px; border-radius: 12px; }
+  .draw-screen .word-actions .button { padding: 6px 8px; font-size: 12px; }
+  .draw-screen .word-card { margin: 0; padding: 5px 10px; border-radius: 15px; }
+  .draw-screen .category { padding: 2px 8px; font-size: 12px; }
+  .draw-screen .word { margin: 0; font-size: 25px; line-height: 1.1; }
+  .draw-screen .canvas-wrap {
+    width: min(100%, calc(100dvh - 340px));
+    max-height: calc(100dvh - 340px);
+    margin: 0 auto;
+    border-width: 2px;
+    border-radius: 15px;
+    box-shadow: 0 5px 15px rgba(88, 64, 76, .08);
+    flex: 1 1 auto;
+  }
+  .draw-screen .tools { margin: 0; display: grid; gap: 5px; }
+  .draw-screen .colors { margin: 0; gap: 5px; }
+  .draw-screen .color { width: 29px; height: 29px; border-width: 2px; }
+  .draw-screen .tool-grid { grid-template-columns: 1.25fr repeat(3, 1fr); gap: 5px; }
+  .draw-screen .tool-grid .button { min-height: 36px; padding: 5px 4px; border-radius: 11px; font-size: 13px; }
+  .draw-screen .notice { margin: 0; padding: 5px 8px; border-radius: 10px; font-size: 11px; line-height: 1.25; text-align: center; }
+  .draw-screen > #saveDrawing { min-height: 40px; padding: 7px 12px; border-radius: 12px; }
+  .draw-screen.custom-word-open { overflow-y: auto; }
+  .draw-screen .custom-word-form { flex: 0 0 auto; margin: 0; padding: 9px; }
 }

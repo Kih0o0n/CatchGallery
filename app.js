@@ -806,7 +806,8 @@ async function loadGalleryDrawings(status = state.galleryTab, sort = state.galle
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
-    list.push({ ...d, likeCount: Object.keys(safeObject(likes[child.key])).length, id: child.key });
+    const drawingLikes = safeObject(likes[child.key]);
+    list.push({ ...d, likeCount: Object.keys(drawingLikes).length, isLiked: drawingLikes[state.user.id] === true, id: child.key });
   });
   const timeKey = status === "solved" ? "solvedAt" : "expiredAt";
   return list.sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
@@ -826,10 +827,10 @@ async function renderGallery() {
 }
 function galleryFrame(list, i) {
   const d = list[i];
-  return `<div class="frame"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button ${d.drawerId === state.user.id ? "ghost" : "secondary"} full" data-like="${d.id}" ${d.drawerId === state.user.id ? "disabled" : ""}>♡ 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div>`;
+  return `<div class="frame"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => `<button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small>♡ ${Number(d.likeCount) || 0} · ${escapeHtml(drawerName(d))}</small></button>`).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => `<button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>`).join("")}</div>`;
 }
 function bindGallery(list) {
   document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => { state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; renderGallery(); });
@@ -951,7 +952,7 @@ async function loadFeedback() {
     const reactionValues = Object.values(safeObject(reactions[child.key]));
     const likeCount = reactionValues.filter(v => v === "like").length;
     const dislikeCount = reactionValues.filter(v => v === "dislike").length;
-    const meta = { id: child.key, ...child.val(), likeCount, dislikeCount, popularityScore: likeCount - dislikeCount, isMine: !!mine[child.key] };
+    const meta = { id: child.key, ...child.val(), likeCount, dislikeCount, popularityScore: likeCount - dislikeCount, isMine: !!mine[child.key], myReaction: safeObject(reactions[child.key])[state.user.id] || null };
     if (meta.deleted) return;
     if (state.feedbackView === "mine" && !meta.isMine) return;
     if (meta.hidden && !state.isAdmin) return;
@@ -1013,7 +1014,7 @@ function feedbackCard(f) {
   const secretLocked = f.isSecret && !f.content;
   const body = secretLocked ? '<div class="secret-feedback">🔒 비밀글입니다.<br><span>운영자와 작성자만 내용을 볼 수 있습니다.</span></div>' : `<p class="feedback-content">${escapeHtml(f.content?.content || "")}</p>`;
   const reply = f.content?.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : "";
-  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reply}<div class="reaction-row"><button data-react="like" data-id="${f.id}" ${f.isMine ? "disabled" : ""}>👍 ${Number(f.likeCount) || 0}</button><button data-react="dislike" data-id="${f.id}" ${f.isMine ? "disabled" : ""}>👎 ${Number(f.dislikeCount) || 0}</button></div>${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}">수정</button><button class="button danger" data-delete-feedback="${f.id}">삭제</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" placeholder="운영자 답변">${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}">${f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}">${f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
+  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reply}<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${f.id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👍 ${Number(f.likeCount) || 0}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${f.id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👎 ${Number(f.dislikeCount) || 0}</button></div>${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}">수정</button><button class="button danger" data-delete-feedback="${f.id}">삭제</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" placeholder="운영자 답변">${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}">${f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}">${f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
 }
 function bindFeedback(list) {
   const form = document.querySelector("#feedbackForm");

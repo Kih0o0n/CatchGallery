@@ -109,6 +109,8 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .thumbnail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .thumbnail { border: 1px solid var(--line); background: white; border-radius: 17px; padding: 8px; text-align: left; box-shadow: 0 5px 16px rgba(0,0,0,.05); }
 .thumbnail img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 11px; }
+.like-button .heart, .thumbnail-like .heart { display: inline-block; font-size: 1.15em; }
+.like-button.is-liked .heart, .thumbnail-like.is-liked .heart { color: #ef4444; }
 .rank-row { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 10px; padding: 14px; border-radius: 17px; margin-bottom: 8px; background: white; border: 1px solid var(--line); }
 .rank-row.mine { background: #fff4ca; border-color: #f0ce68; }.rank-num { font: 22px Jua, sans-serif; text-align: center; }.rank-score { font-weight: 700; color: #e2677e; }
 .status-tabs { overflow-x: auto; justify-content: flex-start; }.status-tabs button { min-width: 82px; }
@@ -128,6 +130,9 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .reaction-row { display: flex; gap: 8px; margin-top: 14px; }
 .reaction-row button { border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; background: white; }
 .reaction-row button:disabled { opacity: .5; }
+.feedback-reaction.is-active { font-weight: 700; box-shadow: 0 3px 10px rgba(88,64,76,.12); }
+.feedback-reaction.like.is-active { background: #fff3cf; border-color: #e6b95c; }
+.feedback-reaction.dislike.is-active { background: #eeeafa; border-color: #9b8bc1; }
 .admin-reply { margin-top: 14px; padding: 13px; border-radius: 14px; background: #edf8f5; }
 .admin-reply p { margin: 7px 0 0; white-space: pre-wrap; }
 .admin-tools { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line); }

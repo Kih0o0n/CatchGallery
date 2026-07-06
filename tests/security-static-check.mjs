@@ -19,6 +19,13 @@ assert.equal(count(/^async function toggleLike/gm), 1, "toggleLike must have one
 assert.equal(count(/^async function toggleFeedbackReaction/gm), 1, "toggleFeedbackReaction must have one definition");
 assert.doesNotMatch(app, /applyLocally/, "compat transactions must use transaction(updateFn, null, false)");
 assert.equal(count(/,\s*null,\s*false\)/g), 5, "five compat transactions must disable local events with the third argument");
+assert.match(app, /successCount >= 10 \? 0 : successCount >= 5 \? 5 : 10/, "solver rewards must use 10, 5, 0 tiers");
+assert.match(app, /claim\.type === "solver"[^\n]+now - 3600000/, "recent solver successes must use a rolling hour");
+assert.match(app, /const drawerReward = 30/, "drawer solve reward must be 30");
+assert.match(app, /function isOwnDrawing\(d\)/, "drawing ownership checks must be shared");
+assert.match(app, /name === "gallery" && state\.route !== "gallery"[\s\S]{0,120}state\.galleryView = "thumb"/, "gallery entry must reset to thumbnail view");
+assert.match(app, /data-view="thumb"[\s\S]{0,250}data-view="frame"/, "thumbnail view control must precede frame view control");
+assert.match(styles, /\.gallery-screen \.frame-image[^}]+height:\s*min\(42dvh, 420px\)/, "gallery frame image must fit mobile height");
 assert.match(app, /slice\(0,\s*30\)/, "ranking must remain limited to 30 users");
 assert.doesNotMatch(app, /예: 기훈/);
 assert.match(app, /평소 쓰는 비밀번호를 사용하지 마세요\./);
@@ -55,6 +62,9 @@ assert.match(rules.feedbackContent.$feedbackId[".read"], /admins/);
 assert.match(rules.feedbackReactions.$feedbackId.$uid[".write"], /feedbackOwners/);
 assert.match(rules.scoreClaims.$uid.$drawingId[".write"], /solverReward/);
 assert.match(rules.scoreClaims.$uid.$drawingId[".write"], /drawerReward/);
+assert.match(rules.drawings.$id[".write"], /drawerReward'\)\.val\(\) === 30/);
+assert.match(rules.drawings.$id[".write"], /solverReward'\)\.val\(\) === 0/);
+assert.match(rules.scoreClaims.$uid.$drawingId.score[".validate"], /<= 30/);
 assert.match(rules.scoreClaims.$uid.$drawingId[".write"], /child\('type'\)/);
 
 const visit = value => {

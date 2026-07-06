@@ -249,6 +249,8 @@ const state = {
 };
 let db = null;
 let auth = null;
+let serverTimeOffset = 0;
+let serverClockBound = false;
 
 function firebaseReady() { return true; }
 function initFirebase() {
@@ -256,13 +258,19 @@ function initFirebase() {
   if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.database();
   auth = firebase.auth();
+  if (!serverClockBound) {
+    db.ref(".info/serverTimeOffset").on("value", snap => { serverTimeOffset = Number(snap.val()) || 0; });
+    serverClockBound = true;
+  }
   return true;
 }
-function serverNow() { return Date.now(); }
+function serverNow() { return Date.now() + serverTimeOffset; }
 function escapeHtml(value = "") { const d = document.createElement("div"); d.textContent = String(value); return d.innerHTML; }
 function safeObject(value) { return value && typeof value === "object" ? value : {}; }
 function drawerName(d) { return d.drawerNickname || d.drawerDisplayName || "알 수 없음"; }
 function solverName(d) { return d.solverNickname || d.solverDisplayName || "알 수 없음"; }
+function drawingOwnerId(d) { return d?.drawerId || d?.drawerUid || d?.ownerUid || d?.authorUid || d?.userId || null; }
+function isOwnDrawing(d) { return !!state.user?.id && drawingOwnerId(d) === state.user.id; }
 function showToast(message) {
   const el = document.querySelector("#toast");
   el.textContent = message;
@@ -299,6 +307,10 @@ function isConfigured() {
   return false;
 }
 function route(name, options = {}) {
+  if (name === "gallery" && state.route !== "gallery") {
+    state.galleryView = "thumb";
+    state.galleryIndex = 0;
+  }
   state.route = name;
   if (name !== "draw") state.editDrawing = null;
   history.pushState({ route: name }, "", `#${name}`);
@@ -307,6 +319,10 @@ function route(name, options = {}) {
 
 window.addEventListener("popstate", () => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
+  if (name === "gallery" && state.route !== "gallery") {
+    state.galleryView = "thumb";
+    state.galleryIndex = 0;
+  }
   state.route = name;
   renderRoute();
 });
@@ -438,10 +454,25 @@ function sumClaims(claims) { return Object.values(safeObject(claims)).reduce((su
 function claimType(claim, drawing, userId) {
   if (claim && typeof claim === "object" && ["drawer", "solver"].includes(claim.type)) return claim.type;
   if (drawing?.solverId === userId) return "solver";
-  if (drawing?.drawerId === userId) return "drawer";
+  if (drawingOwnerId(drawing) === userId) return "drawer";
   return null;
 }
 async function loadUserScore(uid) { return sumClaims((await db.ref(`scoreClaims/${uid}`).once("value")).val()); }
+function recentSolverSuccessCount(claims, now = serverNow()) {
+  return Object.values(safeObject(claims)).filter(claim => claim && typeof claim === "object" && claim.type === "solver" && Number(claim.createdAt) >= now - 3600000 && Number(claim.createdAt) <= now + 60000).length;
+}
+async function loadRecentSolverSuccessCount(uid = state.user?.id) {
+  if (!uid) return 0;
+  return recentSolverSuccessCount((await db.ref(`scoreClaims/${uid}`).once("value")).val());
+}
+function solverBaseReward(successCount) { return successCount >= 10 ? 0 : successCount >= 5 ? 5 : 10; }
+function solverRewardFor(successCount, hintUsed) { return Math.max(0, solverBaseReward(successCount) - (hintUsed ? 4 : 0)); }
+function solverRewardHtml(successCount, hintUsed = false) {
+  const reward = solverRewardFor(successCount, hintUsed);
+  if (successCount >= 10) return `<b>지금 맞혀도 랭킹 점수는 오르지 않아요.</b><small>최근 1시간 동안 정답을 많이 맞혔어요. 정답 확인은 계속할 수 있어요!</small>`;
+  if (successCount >= 5) return `<b>지금 맞히면 +${reward}점!</b><small>최근 1시간 동안 정답을 여러 개 맞혀 보상이 조금 줄었어요. 계속 맞힐 수 있어요!</small>`;
+  return `<b>지금 맞히면 +${reward}점!</b>${hintUsed ? "<small>카테고리 힌트 사용으로 4점이 줄었어요.</small>" : ""}`;
+}
 async function loadCurrentUser(userId = auth?.currentUser?.uid) {
   if (!db || !userId) return null;
   const [snap, adminSnap, score] = await Promise.all([
@@ -534,7 +565,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.1</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.2</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -551,7 +582,7 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="8" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "수정할 때마다 최종 보상 -2점" : "누군가 맞혀야 점수를 얻습니다.<br>힌트가 필요한 난해한 그림은 낮은 점수를 얻습니다."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => {
     document.querySelectorAll(".color").forEach(x => x.classList.remove("selected"));
@@ -791,13 +822,15 @@ async function renderSolve() {
   loading();
   const sort = sessionStorage.getItem("solveSort") || "new";
   try {
-    const list = await loadOpenDrawings(sort);
-    appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div class="notice">힌트를 보면 정답 시 6점<br>힌트 없이 맞히면 10점</div><div id="openList">${list.length ? list.map(openDrawingCard).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
+    const [list, recentSuccesses] = await Promise.all([loadOpenDrawings(sort), loadRecentSolverSuccessCount()]);
+    appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
       state.hintUsed[button.dataset.hint] = true;
       button.textContent = `카테고리: ${button.dataset.category}`;
       button.disabled = true;
+      const reward = document.querySelector(`[data-answer-reward="${button.dataset.hint}"]`);
+      if (reward) reward.innerHTML = solverRewardHtml(Number(button.dataset.recentSuccesses) || 0, true);
     });
     document.querySelectorAll("[data-answer-form]").forEach(form => form.onsubmit = async event => {
       event.preventDefault();
@@ -811,7 +844,7 @@ async function renderSolve() {
       try {
         const result = await submitAnswer(id, input.value, !!state.hintUsed[id]);
         if (result.correct) {
-          showToast(`정답! ${result.solverReward}점을 받았어요 `);
+          showToast(result.solverReward > 0 ? `정답이에요! +${result.solverReward}점 · 그림을 그린 친구도 +30점!` : "정답이에요! 이번에는 랭킹 점수가 쉬어가고, 그림을 그린 친구는 +30점!");
           await loadCurrentUser();
           renderSolve();
         } else {
@@ -835,17 +868,20 @@ async function renderSolve() {
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "그림을 불러오지 못했어요.")}</section>`;
   }
 }
-function openDrawingCard(d) {
-  const mine = d.drawerId === state.user.id;
-  return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}">카테고리 힌트 보기 (-4점)</button><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+function openDrawingCard(d, recentSuccesses = 0) {
+  const mine = isOwnDrawing(d);
+  return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}">카테고리 힌트 보기 (-4점)</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, false)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 async function updateDrawing(drawingId) {
   const imageData = state.canvas.toDataURL("image/png");
   const now = serverNow();
+  const ref = db.ref(`drawings/${drawingId}`);
+  const fallbackDrawing = (await ref.once("value")).val();
   let reason = "수정할 수 없는 그림이에요.";
-  const result = await db.ref(`drawings/${drawingId}`).transaction(d => {
+  const result = await ref.transaction(current => {
+    const d = current || fallbackDrawing;
     if (!d) return;
-    if (d.status !== "open" || d.drawerId !== state.user.id || d.solverId || Number(d.expiresAt) <= now) return;
+    if (d.status !== "open" || !isOwnDrawing(d) || d.solverId || Number(d.expiresAt) <= now) return;
     reason = "";
     return { ...d, imageData, updatedAt: now, revisionCount: (Number(d.revisionCount) || 0) + 1 };
   }, null, false);
@@ -853,7 +889,12 @@ async function updateDrawing(drawingId) {
 }
 async function withdrawDrawing(drawingId) {
   const now = serverNow();
-  const result = await db.ref(`drawings/${drawingId}`).transaction(d => d && d.status === "open" && d.drawerId === state.user.id && !d.solverId && Number(d.expiresAt) > now ? { ...d, status: "withdrawn", withdrawnAt: now, updatedAt: now } : undefined, null, false);
+  const ref = db.ref(`drawings/${drawingId}`);
+  const fallbackDrawing = (await ref.once("value")).val();
+  const result = await ref.transaction(current => {
+    const d = current || fallbackDrawing;
+    return d && d.status === "open" && isOwnDrawing(d) && !d.solverId && Number(d.expiresAt) > now ? { ...d, status: "withdrawn", withdrawnAt: now, updatedAt: now } : undefined;
+  }, null, false);
   if (!result.committed) throw new Error("회수할 수 없는 그림이에요.");
 }
 async function loadGalleryDrawings(status = state.galleryTab, sort = state.gallerySort) {
@@ -878,7 +919,7 @@ async function renderGallery() {
   try {
     const list = await loadGalleryDrawings();
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
-    appEl.innerHTML = `<section class="screen"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><div class="view-toggle"><button data-view="frame" class="${state.galleryView === "frame" ? "active" : ""}">액자 보기</button><button data-view="thumb" class="${state.galleryView === "thumb" ? "active" : ""}">썸네일 보기</button></div><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div><div id="galleryContent">${list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.")}</div></section>`;
+    appEl.innerHTML = `<section class="screen gallery-screen"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><div class="view-toggle"><button data-view="thumb" class="${state.galleryView === "thumb" ? "active" : ""}">썸네일 보기</button><button data-view="frame" class="${state.galleryView === "frame" ? "active" : ""}">액자 보기</button></div><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div><div id="galleryContent">${list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.")}</div></section>`;
     bindGallery(list);
   } catch (error) {
     console.error(error);
@@ -887,7 +928,7 @@ async function renderGallery() {
 }
 function galleryFrame(list, i) {
   const d = list[i];
-  return `<div class="frame"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div>`;
+  return `<div class="frame"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div>`;
 }
 function galleryThumbs(list) {
   return `<div class="thumbnail-grid">${list.map((d, i) => `<button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>`).join("")}</div>`;
@@ -985,7 +1026,7 @@ async function renderManage() {
   }
 }
 function manageCard(d) {
-  return `<article class="card drawing-card"><img src="${d.imageData}" alt="내 그림"><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">수정할 때마다 최종 보상 -2점</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
+  return `<article class="card drawing-card"><img src="${d.imageData}" alt="내 그림"><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">정답이 맞혀지면 그린 사람에게 30점!</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
 }
 
 async function submitFeedback(content, isAnonymous, isSecret) {
@@ -1180,6 +1221,8 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   if (!fallbackDrawing) return { correct: false, message: "그림을 찾을 수 없어요." };
 
   const now = serverNow();
+  const recentSuccesses = await loadRecentSolverSuccessCount();
+  const solverReward = solverRewardFor(recentSuccesses, hintUsed);
   let outcome = { correct: false, message: "아쉽지만 정답이 아니에요." };
   let settledDrawing = null;
 
@@ -1193,7 +1236,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
       return;
     }
 
-    if (d.drawerId === state.user.id) { outcome.message = "내 그림은 맞힐 수 없습니다."; return; }
+    if (isOwnDrawing(d)) { outcome.message = "내 그림은 맞힐 수 없습니다."; return; }
     if (d.status !== "open" || d.solverId) { outcome.message = "이미 도전이 끝난 그림이에요."; return; }
 
     if (Number(d.expiresAt) <= now) {
@@ -1205,9 +1248,8 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     const acceptedAnswers = [d.word, ...storedAnswers];
     if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return;
 
-    const base = hintUsed ? 6 : 10;
-    const drawerReward = Math.max(0, base - (Number(d.revisionCount) || 0) * 2);
-    outcome = { correct: true, solverReward: base, drawerReward };
+    const drawerReward = 30;
+    outcome = { correct: true, solverReward, drawerReward };
 
     const solvedUpdate = {
       ...d,
@@ -1219,7 +1261,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
       solvedAt: now,
       updatedAt: now,
       hintUsed: !!hintUsed,
-      solverReward: base,
+      solverReward,
       drawerReward
     };
 

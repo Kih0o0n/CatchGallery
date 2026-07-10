@@ -583,7 +583,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.3</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.4</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -953,12 +953,24 @@ async function renderGallery() {
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "전시장을 불러오지 못했어요.")}</section>`;
   }
 }
+async function adminDeleteDrawing(drawingId) {
+  if (!state.isAdmin) throw new Error("관리자만 그림을 숨길 수 있어요.");
+  const ref = db.ref(`drawings/${drawingId}`);
+  const fallbackDrawing = (await ref.once("value")).val();
+  const now = serverNow();
+  const result = await ref.transaction(current => {
+    const d = current || fallbackDrawing;
+    if (!d || d.status === "adminDeleted") return;
+    return { ...d, status: "adminDeleted", adminDeletedAt: now, adminDeletedBy: state.user.id, updatedAt: now };
+  }, null, false);
+  if (!result.committed) throw new Error("그림을 숨기지 못했어요.");
+}
 function galleryFrame(list, i) {
   const d = list[i];
   return `<div class="frame"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => `<button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>`).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => `<div class="thumbnail-wrap"><button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`).join("")}</div>`;
 }
 function bindGallery(list) {
   document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => { state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; renderGallery(); });
@@ -977,6 +989,7 @@ function bindGallery(list) {
     try { await toggleLike(button.dataset.like); renderGallery(); }
     catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.innerHTML = original; }
   });
+  document.querySelectorAll("[data-admin-delete]").forEach(button => button.onclick = () => confirmModal("관리자 삭제", "관리자 권한으로 이 그림을 전시장에서 숨길까요?", async () => { await adminDeleteDrawing(button.dataset.adminDelete); showToast("그림을 전시장에서 숨겼어요."); renderGallery(); }));
 }
 
 async function loadRanking(type = state.rankingType) {

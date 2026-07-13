@@ -33,7 +33,7 @@ assert.match(app, /status: \"expired\", expiredAt, updatedAt: expiredAt/, "expir
 assert.match(app, /"학교 \/ 문구"|"전자기기 \/ 기계"/, "expanded prompt categories must be present");
 assert.match(app, /운전기사: "운전기사,기사,기사님"/, "driver answer aliases must be present");
 assert.match(app, /findIndex\(candidate => candidate\.word === entry\.word\)/, "default words must be deduplicated");
-assert.match(app, /home-version[^\n]+v1\.1\.0/, "home version must show v1.1.0");
+assert.match(app, /home-version[^\n]+v1\.1\.1/, "home version must show v1.1.1");
 assert.match(app, /function adminDeleteDrawing\(drawingId\)/, "admin drawing soft delete must exist");
 assert.match(app, /status: "adminDeleted"/, "admin delete must use soft delete status");
 assert.match(app, /data-admin-delete/, "admin delete controls must be rendered");

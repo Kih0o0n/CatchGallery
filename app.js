@@ -239,7 +239,7 @@ const WORDS = Object.entries({
 
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
-const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 10, maxConcurrentLoads: 3 };
+const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
 
 const appEl = document.querySelector("#app");
 const headerEl = document.querySelector("#appHeader");
@@ -266,6 +266,7 @@ const state = {
   galleryLoadQueue: [],
   galleryActiveLoads: 0,
   migrationCursor: null,
+  migrationRunning: false,
   manageStatus: "open",
   rankingType: "total",
   editDrawing: null,
@@ -683,7 +684,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.0</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.1</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -1256,42 +1257,91 @@ function openMigrationPanel() {
   if (!state.isAdmin) return;
   state.migrationCursor = null;
   const root = document.querySelector("#modalRoot");
-  root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><p><b>시작 전에 Realtime Database JSON 백업을 꼭 받아주세요.</b>\n한 번에 10개씩 처리하며, 중단 후 다시 실행할 수 있습니다.</p><div class="button-row"><button class="button ghost" data-migration-cancel>취소</button><button class="button danger" data-migration-start>백업 완료 · 시작</button></div></div></div>`;
+  root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><p><b>시작 전에 Realtime Database JSON 백업을 꼭 받아주세요.</b>\n한 번에 ${IMAGE_OPTIONS.migrationBatch}개씩 처리하며, 중단 후 다시 실행할 수 있습니다.</p><div class="button-row"><button class="button ghost" data-migration-cancel>취소</button><button class="button danger" data-migration-start>백업 완료 · 시작</button></div></div></div>`;
   root.querySelector("[data-migration-cancel]").onclick = () => { root.innerHTML = ""; };
   root.querySelector("[data-migration-start]").onclick = async () => {
-    root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><div data-migration-status>준비 중…</div><button class="button secondary full" data-migrate-next disabled>다음 10개 처리</button><button class="button ghost full" data-migration-close>닫기</button></div></div>`;
+    root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><div data-migration-status>그림 목록을 확인하는 중...</div><button class="button secondary full" data-migrate-next disabled>다음 ${IMAGE_OPTIONS.migrationBatch}개 처리</button><button class="button ghost full" data-migration-close>닫기</button></div></div>`;
     root.querySelector("[data-migration-close]").onclick = () => { root.innerHTML = ""; };
     root.querySelector("[data-migrate-next]").onclick = () => runMigrationBatch(root);
     await runMigrationBatch(root);
   };
 }
+function migrationTimeout(promise, stage) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => { const error = new Error(`${stage} 시간 초과`); error.code = "migration/timeout"; reject(error); }, IMAGE_OPTIONS.migrationTimeout); })
+  ]).finally(() => clearTimeout(timer));
+}
+function migrationErrorMessage(error, stage) {
+  if (error?.code === "migration/timeout") return `${stage} 시간이 초과되었습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.`;
+  if (error?.code === "PERMISSION_DENIED" || error?.code === "permission_denied") return "관리자 권한을 확인할 수 없습니다. Firebase 규칙과 관리자 등록을 확인해 주세요.";
+  if (stage === "그림 목록 조회") return "그림 목록을 불러오지 못했습니다. 네트워크 상태와 Firebase 규칙을 확인한 뒤 다시 시도해 주세요.";
+  return "최적화 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+}
 async function runMigrationBatch(root) {
-  if (!state.isAdmin) throw new Error("관리자만 실행할 수 있어요.");
   const status = root.querySelector("[data-migration-status]");
   const nextButton = root.querySelector("[data-migrate-next]");
+  const closeButton = root.querySelector("[data-migration-close]");
+  if (state.migrationRunning || !status || !nextButton) return;
+  state.migrationRunning = true;
   nextButton.disabled = true;
-  const query = db.ref("drawings").orderByKey().startAt(state.migrationCursor || "").limitToFirst(state.migrationCursor ? IMAGE_OPTIONS.migrationBatch + 1 : IMAGE_OPTIONS.migrationBatch);
-  const snap = await query.once("value");
-  const items = [];
-  snap.forEach(child => { if (child.key !== state.migrationCursor) items.push({ id: child.key, ...child.val() }); });
+  if (closeButton) closeButton.disabled = true;
+  let canContinue = false;
+  let stage = "관리자 권한 확인";
   const totals = { success: 0, failed: 0, skipped: 0, original: 0, converted: 0 };
-  for (let index = 0; index < items.length; index++) {
-    const drawing = items[index]; state.migrationCursor = drawing.id;
-    status.textContent = `처리 중 ${index + 1}/${items.length} · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
-    if (!drawing.imageData || drawing.imageReady) { totals.skipped++; continue; }
-    try {
-      const optimized = await optimizeDataUrl(drawing.imageData);
-      totals.original += dataUrlBytes(drawing.imageData); totals.converted += optimized.imageBytes + optimized.thumbnailBytes;
-      await db.ref().update({ [`drawingImages/${drawing.id}/imageData`]: optimized.imageData, [`drawingThumbnails/${drawing.id}/imageData`]: optimized.thumbnailData });
-      const [imageCheck, thumbnailCheck] = await Promise.all([db.ref(`drawingImages/${drawing.id}/imageData`).once("value"), db.ref(`drawingThumbnails/${drawing.id}/imageData`).once("value")]);
-      if (!imageCheck.exists() || !thumbnailCheck.exists()) throw new Error("저장 확인 실패");
-      await db.ref(`drawings/${drawing.id}`).update({ imageData: null, imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true });
-      totals.success++;
-    } catch (error) { totals.failed++; console.error("[gallery migration]", drawing.id, error); }
+  try {
+    status.textContent = "그림 목록을 확인하는 중...";
+    if (!state.isAdmin || auth.currentUser?.uid !== state.user?.id) { const error = new Error("관리자 권한 없음"); error.code = "PERMISSION_DENIED"; throw error; }
+    stage = "그림 목록 조회";
+    status.textContent = "처리할 그림을 불러오는 중...";
+    const batchStartCursor = state.migrationCursor;
+    const query = db.ref("drawings").orderByKey().startAt(state.migrationCursor || "").limitToFirst(state.migrationCursor ? IMAGE_OPTIONS.migrationBatch + 1 : IMAGE_OPTIONS.migrationBatch);
+    const snap = await migrationTimeout(query.once("value"), stage);
+    const items = [];
+    snap.forEach(child => { if (child.key !== state.migrationCursor) items.push({ ...(child.val() || {}), id: child.key }); });
+    if (!items.length) {
+      status.textContent = state.migrationCursor ? "모든 기존 그림의 최적화가 완료되었습니다." : "최적화할 기존 그림이 없습니다.";
+      return;
+    }
+    for (let index = 0; index < items.length; index++) {
+      const drawing = items[index]; state.migrationCursor = drawing.id;
+      if (!drawing.imageData) { totals.skipped++; continue; }
+      try {
+        let optimized = null;
+        if (!drawing.imageReady) {
+          stage = "이미지 변환"; status.textContent = `${index + 1}/${items.length} 이미지 변환 중... · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
+          optimized = await migrationTimeout(optimizeDataUrl(drawing.imageData), stage);
+          totals.original += dataUrlBytes(drawing.imageData); totals.converted += optimized.imageBytes + optimized.thumbnailBytes;
+          stage = "새 이미지 저장"; status.textContent = `${index + 1}/${items.length} 새 이미지 저장 중... · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
+          await migrationTimeout(db.ref().update({ [`drawingImages/${drawing.id}/imageData`]: optimized.imageData, [`drawingThumbnails/${drawing.id}/imageData`]: optimized.thumbnailData }), stage);
+        }
+        stage = "저장 결과 확인"; status.textContent = `${index + 1}/${items.length} 저장 결과 확인 중... · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
+        const [imageCheck, thumbnailCheck] = await migrationTimeout(Promise.all([db.ref(`drawingImages/${drawing.id}/imageData`).once("value"), db.ref(`drawingThumbnails/${drawing.id}/imageData`).once("value")]), stage);
+        if (!imageCheck.exists() || !thumbnailCheck.exists()) { const error = new Error("저장 확인 실패"); error.code = "migration/verify-failed"; throw error; }
+        if (optimized) await migrationTimeout(db.ref(`drawings/${drawing.id}`).update({ imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true }), "메타데이터 저장");
+        stage = "기존 이미지 정리"; status.textContent = `${index + 1}/${items.length} 기존 이미지 정리 중... · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
+        await migrationTimeout(db.ref(`drawings/${drawing.id}/imageData`).remove(), stage);
+        totals.success++;
+      } catch (error) {
+        totals.failed++;
+        console.error(`[gallery migration] ${stage}`, error?.code || "unknown", error);
+      }
+    }
+    const saved = Math.max(0, totals.original - totals.converted);
+    const resultTitle = totals.failed > 0 ? "최적화 중 오류가 발생했습니다." : totals.success === 0 ? "모든 기존 그림의 최적화가 완료되었습니다." : "최적화 완료";
+    status.innerHTML = `<p>${resultTitle}</p><p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
+    if (totals.failed) state.migrationCursor = batchStartCursor;
+    canContinue = totals.failed > 0 || items.length >= IMAGE_OPTIONS.migrationBatch;
+  } catch (error) {
+    status.textContent = migrationErrorMessage(error, stage);
+    console.error(`[gallery migration] ${stage}`, error?.code || "unknown", error);
+    canContinue = true;
+  } finally {
+    state.migrationRunning = false;
+    if (root.querySelector("[data-migrate-next]")) nextButton.disabled = !canContinue;
+    if (root.querySelector("[data-migration-close]") && closeButton) closeButton.disabled = false;
   }
-  const saved = Math.max(0, totals.original - totals.converted);
-  status.innerHTML = `<p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
-  nextButton.disabled = items.length < IMAGE_OPTIONS.migrationBatch;
 }
 
 async function loadRanking(type = state.rankingType) {

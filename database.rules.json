@@ -87,7 +87,7 @@
       "$drawingId": {
         ".read": "auth != null && root.child('drawings').child($drawingId).exists()",
         ".write": "auth != null && ((root.child('drawings').child($drawingId).child('drawerId').val() === auth.uid && root.child('drawings').child($drawingId).child('status').val() === 'open' && !root.child('drawings').child($drawingId).child('solverId').exists() && root.child('drawings').child($drawingId).child('expiresAt').val() > now) || root.child('admins').child(auth.uid).val() === true)",
-        "imageData": { ".validate": "newData.isString() && newData.val().matches(/^data:image\/(png|webp);base64,/)" },
+        "imageData": { ".validate": "newData.isString() && newData.val().matches(/^data:image\\/(png|webp);base64,/)" },
         "$other": { ".validate": false }
       }
     },
@@ -96,7 +96,7 @@
       "$drawingId": {
         ".read": "auth != null && root.child('drawings').child($drawingId).exists()",
         ".write": "auth != null && ((root.child('drawings').child($drawingId).child('drawerId').val() === auth.uid && root.child('drawings').child($drawingId).child('status').val() === 'open' && !root.child('drawings').child($drawingId).child('solverId').exists() && root.child('drawings').child($drawingId).child('expiresAt').val() > now) || root.child('admins').child(auth.uid).val() === true)",
-        "imageData": { ".validate": "newData.isString() && newData.val().matches(/^data:image\/(png|webp);base64,/)" },
+        "imageData": { ".validate": "newData.isString() && newData.val().matches(/^data:image\\/(png|webp);base64,/)" },
         "$other": { ".validate": false }
       }
     },

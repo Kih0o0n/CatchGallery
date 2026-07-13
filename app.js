@@ -239,6 +239,7 @@ const WORDS = Object.entries({
 
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
+const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 10, maxConcurrentLoads: 3 };
 
 const appEl = document.querySelector("#app");
 const headerEl = document.querySelector("#appHeader");
@@ -255,6 +256,16 @@ const state = {
   galleryView: "thumb",
   gallerySort: "new",
   galleryIndex: 0,
+  galleryLists: {},
+  galleryScroll: {},
+  thumbnailCache: new Map(),
+  detailImageCache: new Map(),
+  likeCache: new Map(),
+  pendingLikes: new Set(),
+  galleryObserver: null,
+  galleryLoadQueue: [],
+  galleryActiveLoads: 0,
+  migrationCursor: null,
   manageStatus: "open",
   rankingType: "total",
   editDrawing: null,
@@ -330,6 +341,75 @@ function randomWord() {
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
 function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20; }
+function dataUrlBytes(dataUrl) {
+  const base64 = String(dataUrl || "").split(",")[1] || "";
+  const padding = (base64.match(/=*$/) || [""])[0].length;
+  return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
+}
+function scaledCanvas(source, maxSize) {
+  const ratio = Math.min(1, maxSize / Math.max(source.width, source.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(source.width * ratio));
+  canvas.height = Math.max(1, Math.round(source.height * ratio));
+  canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+function webpDataUrl(canvas) {
+  try {
+    const data = canvas.toDataURL("image/webp", IMAGE_OPTIONS.webpQuality);
+    return data.startsWith("data:image/webp") ? data : null;
+  } catch (_) { return null; }
+}
+async function optimizeCanvasImages(source) {
+  const detailCanvas = scaledCanvas(source, IMAGE_OPTIONS.detailMax);
+  const png = detailCanvas.toDataURL("image/png");
+  const webp = webpDataUrl(detailCanvas);
+  const detail = webp && dataUrlBytes(webp) < dataUrlBytes(png) ? webp : png;
+  const thumbnailCanvas = scaledCanvas(source, IMAGE_OPTIONS.thumbnailMax);
+  const thumbnail = webpDataUrl(thumbnailCanvas) || thumbnailCanvas.toDataURL("image/png");
+  return {
+    imageData: detail,
+    thumbnailData: thumbnail,
+    imageFormat: detail.startsWith("data:image/webp") ? "webp" : "png",
+    imageWidth: detailCanvas.width,
+    imageHeight: detailCanvas.height,
+    imageBytes: dataUrlBytes(detail),
+    thumbnailBytes: dataUrlBytes(thumbnail)
+  };
+}
+function loadDataUrlImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("이미지를 읽지 못했어요."));
+    image.src = dataUrl;
+  });
+}
+async function optimizeDataUrl(dataUrl) {
+  const image = await loadDataUrlImage(dataUrl);
+  const optimized = await optimizeCanvasImages(image);
+  if (dataUrl.startsWith("data:image/png") && Math.max(image.width, image.height) <= IMAGE_OPTIONS.detailMax && dataUrlBytes(dataUrl) < optimized.imageBytes) {
+    optimized.imageData = dataUrl;
+    optimized.imageFormat = "png";
+    optimized.imageWidth = image.width;
+    optimized.imageHeight = image.height;
+    optimized.imageBytes = dataUrlBytes(dataUrl);
+  }
+  return optimized;
+}
+async function loadDrawingImage(drawing, kind = "detail") {
+  const cache = kind === "thumbnail" ? state.thumbnailCache : state.detailImageCache;
+  if (cache.has(drawing.id)) return cache.get(drawing.id);
+  let imageData = null;
+  if (drawing.imageReady) {
+    const path = kind === "thumbnail" ? "drawingThumbnails" : "drawingImages";
+    imageData = (await db.ref(`${path}/${drawing.id}/imageData`).once("value")).val();
+  }
+  imageData ||= drawing.imageData || null;
+  if (!imageData) throw new Error("이미지를 불러오지 못했어요.");
+  cache.set(drawing.id, imageData);
+  return imageData;
+}
 function isConfigured() {
   if (initFirebase()) return true;
   showToast("Firebase 설정을 먼저 연결해 주세요.");
@@ -603,7 +683,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.7</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.0</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -816,12 +896,19 @@ async function publishDrawing() {
   const now = serverNow();
   const ref = db.ref("drawings").push();
   const id = ref.key;
+  const optimized = await optimizeCanvasImages(state.canvas);
   const data = {
     word: state.word.word,
     category: state.word.category,
     answers: state.word.answers,
     isCustomWord: state.word.isCustomWord,
-    imageData: state.canvas.toDataURL("image/png"),
+    imageVersion: IMAGE_OPTIONS.version,
+    imageFormat: optimized.imageFormat,
+    imageWidth: optimized.imageWidth,
+    imageHeight: optimized.imageHeight,
+    imageBytes: optimized.imageBytes,
+    thumbnailBytes: optimized.thumbnailBytes,
+    imageReady: false,
     drawerId: state.user.id,
     drawerNickname: state.user.nickname,
     status: "open",
@@ -839,8 +926,23 @@ async function publishDrawing() {
     withdrawnAt: null,
     likeCount: 0
   };
-  await ref.set(data);
-  await db.ref(`userDrawings/${state.user.id}/${id}`).set(true);
+  try {
+    await ref.set(data);
+    await db.ref().update({
+      [`drawingImages/${id}/imageData`]: optimized.imageData,
+      [`drawingThumbnails/${id}/imageData`]: optimized.thumbnailData
+    });
+    await db.ref().update({ [`drawings/${id}/imageReady`]: true, [`userDrawings/${state.user.id}/${id}`]: true });
+  } catch (error) {
+    console.error("그림 이미지 저장 실패:", error?.code || "unknown", error);
+    try {
+      await db.ref().update({ [`drawingImages/${id}`]: null, [`drawingThumbnails/${id}`]: null });
+      await ref.update({ status: "withdrawn", withdrawnAt: serverNow(), updatedAt: serverNow() });
+    } catch (cleanupError) { console.error("불완전한 그림 정리 실패:", cleanupError); }
+    throw error;
+  }
+  state.detailImageCache.set(id, optimized.imageData);
+  state.thumbnailCache.set(id, optimized.thumbnailData);
   state.word = null;
 }
 async function expireOldDrawings() {
@@ -870,7 +972,7 @@ async function loadOpenDrawings(sort = "new") {
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
-    if (Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
+    if (d.imageReady !== false && Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
   });
   return list.sort((a, b) => sort === "new" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
 }
@@ -880,6 +982,7 @@ async function renderSolve() {
   const sort = sessionStorage.getItem("solveSort") || "new";
   try {
     const [list, recentSuccesses] = await Promise.all([loadOpenDrawings(sort), loadRecentSolverSuccessCount()]);
+    await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
@@ -930,19 +1033,27 @@ function openDrawingCard(d, recentSuccesses = 0) {
   return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}">카테고리 힌트 보기 (-4점)</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, false)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 async function updateDrawing(drawingId) {
-  const imageData = state.canvas.toDataURL("image/png");
+  const optimized = await optimizeCanvasImages(state.canvas);
   const now = serverNow();
   const ref = db.ref(`drawings/${drawingId}`);
   const fallbackDrawing = (await ref.once("value")).val();
+  if (!fallbackDrawing || fallbackDrawing.status !== "open" || !isOwnDrawing(fallbackDrawing) || fallbackDrawing.solverId || Number(fallbackDrawing.expiresAt) <= now) throw new Error("수정할 수 없는 그림이에요.");
+  await db.ref().update({
+    [`drawingImages/${drawingId}/imageData`]: optimized.imageData,
+    [`drawingThumbnails/${drawingId}/imageData`]: optimized.thumbnailData
+  });
   let reason = "수정할 수 없는 그림이에요.";
   const result = await ref.transaction(current => {
     const d = current || fallbackDrawing;
     if (!d) return;
     if (d.status !== "open" || !isOwnDrawing(d) || d.solverId || Number(d.expiresAt) <= now) return;
     reason = "";
-    return { ...d, imageData, updatedAt: now, revisionCount: (Number(d.revisionCount) || 0) + 1 };
+    const { imageData: legacyImageData, ...metadata } = d;
+    return { ...metadata, imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true, updatedAt: now, revisionCount: (Number(d.revisionCount) || 0) + 1 };
   }, null, false);
   if (!result.committed) throw new Error(reason);
+  state.detailImageCache.set(drawingId, optimized.imageData);
+  state.thumbnailCache.set(drawingId, optimized.thumbnailData);
 }
 async function withdrawDrawing(drawingId) {
   const now = serverNow();
@@ -955,29 +1066,44 @@ async function withdrawDrawing(drawingId) {
   if (!result.committed) throw new Error("회수할 수 없는 그림이에요.");
 }
 async function loadGalleryDrawings(status = state.galleryTab, sort = state.gallerySort) {
+  const started = performance.now();
   await expireOldDrawings();
-  const [snap, likesSnap] = await Promise.all([
-    db.ref("drawings").orderByChild("status").equalTo(status).once("value"),
-    db.ref("drawingLikes").once("value")
-  ]);
-  const likes = safeObject(likesSnap.val());
+  const snap = await db.ref("drawings").orderByChild("status").equalTo(status).once("value");
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
-    const drawingLikes = safeObject(likes[child.key]);
-    list.push({ ...d, likeCount: Object.keys(drawingLikes).length, isLiked: drawingLikes[state.user.id] === true, id: child.key });
+    if (d.imageReady === false) return;
+    const cachedLike = state.likeCache.get(child.key);
+    list.push({ ...d, likeCount: cachedLike?.count ?? (Number(d.likeCount) || 0), isLiked: cachedLike?.liked ?? false, id: child.key });
   });
+  if (sort === "popular") {
+    await Promise.all(list.map(async drawing => {
+      const like = await ensureLikeState(drawing.id);
+      drawing.likeCount = like.count; drawing.isLiked = like.liked;
+    }));
+  }
   const timeKey = status === "solved" ? "solvedAt" : "expiredAt";
-  return list.sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
+  const sorted = list.sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
+  console.info(`[gallery] metadata ${Math.round(performance.now() - started)}ms · ${sorted.length}개`);
+  return sorted;
 }
-async function renderGallery() {
+function galleryListKey() { return `${state.galleryTab}:${state.gallerySort}`; }
+async function renderGallery(force = false) {
   if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
-  loading();
+  const key = galleryListKey();
+  if (force) delete state.galleryLists[key];
+  const cacheHit = !!state.galleryLists[key];
+  if (!state.galleryLists[key]) loading();
   try {
-    const list = await loadGalleryDrawings();
+    const list = state.galleryLists[key] || await loadGalleryDrawings();
+    state.galleryLists[key] = list;
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
-    appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div><div id="galleryContent">${list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.")}</div></section>`;
-    bindGallery(list);
+    const renderedAt = performance.now();
+    appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div>${state.isAdmin ? '<button class="button ghost migration-open" data-open-migration>기존 그림 최적화</button>' : ""}<div id="galleryContent"></div></section>`;
+    renderGalleryContent(list);
+    bindGalleryShell();
+    console.info(`[gallery] cards rendered ${Math.round(performance.now() - renderedAt)}ms · server reread=${!cacheHit}`);
+    if (state.galleryView === "thumb") requestAnimationFrame(() => scrollTo(0, state.galleryScroll[key] || 0));
   } catch (error) {
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "전시장을 불러오지 못했어요.")}</section>`;
@@ -997,28 +1123,175 @@ async function adminDeleteDrawing(drawingId) {
 }
 function galleryFrame(list, i) {
   const d = list[i];
-  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}"><img class="frame-image" src="${d.imageData}" alt="전시 그림"></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 ${Number(d.likeCount) || 0}${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div>`;
+  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot"><img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}"><button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot"><img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="좋아요" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`).join("")}</div>`;
 }
-function bindGallery(list) {
-  document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => { state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; state.galleryView = "thumb"; history.replaceState({ route: "gallery", galleryDetail: false }, "", "#gallery"); renderGallery(); });
-  gallerySort.onchange = () => { state.gallerySort = gallerySort.value; state.galleryIndex = 0; renderGallery(); };
-  document.querySelector("[data-prev]")?.addEventListener("click", () => { state.galleryIndex--; renderGallery(); });
-  document.querySelector("[data-next]")?.addEventListener("click", () => { state.galleryIndex++; renderGallery(); });
-  document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
-  document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => { state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame"; history.pushState({ route: "gallery", galleryDetail: true }, "", "#gallery"); renderGallery(); });
-  document.querySelector("[data-like]")?.addEventListener("click", async e => {
-    const button = e.currentTarget;
-    if (button.disabled) return;
-    const original = button.innerHTML;
-    button.disabled = true;
-    button.textContent = "처리 중…";
-    try { await toggleLike(button.dataset.like); renderGallery(); }
-    catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.innerHTML = original; }
+function renderGalleryContent(list = state.galleryLists[galleryListKey()] || []) {
+  const content = document.querySelector("#galleryContent");
+  if (!content) return;
+  document.querySelector(".gallery-screen")?.classList.toggle("gallery-detail", state.galleryView === "frame");
+  content.innerHTML = list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.");
+  bindGalleryContent(list);
+}
+function bindGalleryShell() {
+  document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => {
+    state.galleryScroll[galleryListKey()] = 0;
+    state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; state.galleryView = "thumb";
+    history.replaceState({ route: "gallery", galleryDetail: false }, "", "#gallery"); renderGallery();
   });
-  document.querySelectorAll("[data-admin-delete]").forEach(button => button.onclick = () => confirmModal("관리자 삭제", "관리자 권한으로 이 그림을 전시장에서 숨길까요?", async () => { await adminDeleteDrawing(button.dataset.adminDelete); showToast("그림을 전시장에서 숨겼어요."); renderGallery(); }));
+  gallerySort.onchange = () => { state.galleryScroll[galleryListKey()] = 0; state.gallerySort = gallerySort.value; state.galleryIndex = 0; renderGallery(); };
+  document.querySelector("[data-open-migration]")?.addEventListener("click", openMigrationPanel);
+}
+function bindGalleryContent(list) {
+  document.querySelector("[data-prev]")?.addEventListener("click", () => { state.galleryIndex--; renderGalleryContent(list); });
+  document.querySelector("[data-next]")?.addEventListener("click", () => { state.galleryIndex++; renderGalleryContent(list); });
+  document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
+  document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => {
+    state.galleryScroll[galleryListKey()] = scrollY; state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame";
+    history.pushState({ route: "gallery", galleryDetail: true }, "", "#gallery"); renderGalleryContent(list);
+  });
+  document.querySelectorAll("[data-like]").forEach(button => button.onclick = async event => {
+    event.stopPropagation();
+    const id = button.dataset.like;
+    if (button.disabled || state.pendingLikes.has(id)) return;
+    state.pendingLikes.add(id); button.disabled = true;
+    try { await ensureLikeState(id); await toggleLike(id, list.find(d => d.id === id)); syncGalleryLike(id); }
+    catch (error) { showToast(userErrorMessage(error)); }
+    finally {
+      state.pendingLikes.delete(id);
+      const own = list.find(d => d.id === id)?.drawerId === state.user.id;
+      document.querySelectorAll(`[data-like="${id}"]`).forEach(item => { item.disabled = own; });
+    }
+  });
+  document.querySelectorAll("[data-admin-delete]").forEach(button => button.onclick = () => confirmModal("관리자 삭제", "관리자 권한으로 이 그림을 전시장에서 숨길까요?", async () => {
+    await adminDeleteDrawing(button.dataset.adminDelete); delete state.galleryLists[galleryListKey()]; showToast("그림을 전시장에서 숨겼어요."); renderGallery();
+  }));
+  if (state.galleryView === "thumb") observeGalleryThumbnails(list); else loadGalleryDetail(list[state.galleryIndex], list);
+}
+function enqueueGalleryLoad(task) {
+  state.galleryLoadQueue.push(task);
+  runGalleryLoadQueue();
+}
+function runGalleryLoadQueue() {
+  while (state.galleryActiveLoads < IMAGE_OPTIONS.maxConcurrentLoads && state.galleryLoadQueue.length) {
+    state.galleryActiveLoads++;
+    Promise.resolve(state.galleryLoadQueue.shift()()).finally(() => { state.galleryActiveLoads--; runGalleryLoadQueue(); });
+  }
+}
+function observeGalleryThumbnails(list) {
+  state.galleryObserver?.disconnect();
+  const started = performance.now();
+  const images = [...document.querySelectorAll("[data-thumbnail-image]")];
+  const initiallyVisible = new Set(images.filter(image => image.getBoundingClientRect().top < innerHeight + 40));
+  let visibleLogged = false;
+  const load = image => {
+    if (image.dataset.queued) return;
+    image.dataset.queued = "true";
+    const drawing = list.find(item => item.id === image.dataset.thumbnailImage);
+    enqueueGalleryLoad(async () => {
+      const first = !state.thumbnailCache.size;
+      try {
+        const [src] = await Promise.all([loadDrawingImage(drawing, "thumbnail"), ensureLikeState(drawing.id)]);
+        if (!image.isConnected) return;
+        image.src = src; image.classList.add("loaded");
+        image.parentElement.querySelector(".image-loading")?.remove();
+        syncGalleryLike(drawing.id);
+        if (first) console.info(`[gallery] first thumbnail ${Math.round(performance.now() - started)}ms`);
+        initiallyVisible.delete(image);
+        if (!initiallyVisible.size && !visibleLogged) { visibleLogged = true; console.info(`[gallery] visible thumbnails complete ${Math.round(performance.now() - started)}ms`); }
+      } catch (_) {
+        if (image.isConnected) image.parentElement.innerHTML = `<button class="image-retry" data-image-retry="${drawing.id}">다시 불러오기</button>`;
+        document.querySelector(`[data-image-retry="${drawing.id}"]`)?.addEventListener("click", () => { state.thumbnailCache.delete(drawing.id); renderGalleryContent(list); });
+      }
+    });
+  };
+  if ("IntersectionObserver" in window) {
+    state.galleryObserver = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) { state.galleryObserver.unobserve(entry.target); load(entry.target); } }), { rootMargin: "240px" });
+    images.forEach(image => state.galleryObserver.observe(image));
+  } else images.forEach(load);
+}
+async function ensureLikeState(id) {
+  if (state.likeCache.has(id)) return state.likeCache.get(id);
+  const snap = await db.ref(`drawingLikes/${id}`).once("value");
+  const likes = safeObject(snap.val());
+  const value = { count: Object.keys(likes).length, liked: likes[state.user.id] === true };
+  state.likeCache.set(id, value);
+  for (const list of Object.values(state.galleryLists)) {
+    const drawing = list.find(item => item.id === id);
+    if (drawing) Object.assign(drawing, { likeCount: value.count, isLiked: value.liked });
+  }
+  return value;
+}
+function syncGalleryLike(id) {
+  const value = state.likeCache.get(id);
+  if (!value) return;
+  document.querySelectorAll(`[data-gallery-card="${id}"]`).forEach(card => card.classList.toggle("has-likes", value.count > 0));
+  document.querySelectorAll(`[data-like="${id}"]`).forEach(button => {
+    button.classList.toggle("is-liked", value.liked);
+    button.setAttribute("aria-pressed", String(value.liked));
+    const heart = button.querySelector(".heart"); if (heart) heart.textContent = value.liked ? "♥" : "♡";
+    const count = button.querySelector("[data-like-count]"); if (count) count.textContent = value.count;
+  });
+}
+async function loadGalleryDetail(drawing, list) {
+  if (!drawing) return;
+  const started = performance.now();
+  try {
+    const [src] = await Promise.all([loadDrawingImage(drawing), ensureLikeState(drawing.id)]);
+    const image = document.querySelector(`[data-detail-image="${drawing.id}"]`);
+    if (image) { image.src = src; image.classList.add("loaded"); image.parentElement.querySelector(".image-loading")?.remove(); }
+    syncGalleryLike(drawing.id);
+    console.info(`[gallery] detail ${Math.round(performance.now() - started)}ms · server list reread=false`);
+    const neighbor = list[state.galleryIndex + 1] || list[state.galleryIndex - 1];
+    if (neighbor) loadDrawingImage(neighbor).catch(() => {});
+  } catch (_) {
+    const slot = document.querySelector(`[data-detail-image="${drawing.id}"]`)?.parentElement;
+    if (slot) slot.innerHTML = `<button class="image-retry" data-detail-retry>이미지 다시 불러오기</button>`;
+    slot?.querySelector("[data-detail-retry]")?.addEventListener("click", () => { state.detailImageCache.delete(drawing.id); renderGalleryContent(list); });
+  }
+}
+function openMigrationPanel() {
+  if (!state.isAdmin) return;
+  state.migrationCursor = null;
+  const root = document.querySelector("#modalRoot");
+  root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><p><b>시작 전에 Realtime Database JSON 백업을 꼭 받아주세요.</b>\n한 번에 10개씩 처리하며, 중단 후 다시 실행할 수 있습니다.</p><div class="button-row"><button class="button ghost" data-migration-cancel>취소</button><button class="button danger" data-migration-start>백업 완료 · 시작</button></div></div></div>`;
+  root.querySelector("[data-migration-cancel]").onclick = () => { root.innerHTML = ""; };
+  root.querySelector("[data-migration-start]").onclick = async () => {
+    root.innerHTML = `<div class="modal-backdrop"><div class="modal migration-modal"><h3>기존 그림 최적화</h3><div data-migration-status>준비 중…</div><button class="button secondary full" data-migrate-next disabled>다음 10개 처리</button><button class="button ghost full" data-migration-close>닫기</button></div></div>`;
+    root.querySelector("[data-migration-close]").onclick = () => { root.innerHTML = ""; };
+    root.querySelector("[data-migrate-next]").onclick = () => runMigrationBatch(root);
+    await runMigrationBatch(root);
+  };
+}
+async function runMigrationBatch(root) {
+  if (!state.isAdmin) throw new Error("관리자만 실행할 수 있어요.");
+  const status = root.querySelector("[data-migration-status]");
+  const nextButton = root.querySelector("[data-migrate-next]");
+  nextButton.disabled = true;
+  const query = db.ref("drawings").orderByKey().startAt(state.migrationCursor || "").limitToFirst(state.migrationCursor ? IMAGE_OPTIONS.migrationBatch + 1 : IMAGE_OPTIONS.migrationBatch);
+  const snap = await query.once("value");
+  const items = [];
+  snap.forEach(child => { if (child.key !== state.migrationCursor) items.push({ id: child.key, ...child.val() }); });
+  const totals = { success: 0, failed: 0, skipped: 0, original: 0, converted: 0 };
+  for (let index = 0; index < items.length; index++) {
+    const drawing = items[index]; state.migrationCursor = drawing.id;
+    status.textContent = `처리 중 ${index + 1}/${items.length} · 성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}`;
+    if (!drawing.imageData || drawing.imageReady) { totals.skipped++; continue; }
+    try {
+      const optimized = await optimizeDataUrl(drawing.imageData);
+      totals.original += dataUrlBytes(drawing.imageData); totals.converted += optimized.imageBytes + optimized.thumbnailBytes;
+      await db.ref().update({ [`drawingImages/${drawing.id}/imageData`]: optimized.imageData, [`drawingThumbnails/${drawing.id}/imageData`]: optimized.thumbnailData });
+      const [imageCheck, thumbnailCheck] = await Promise.all([db.ref(`drawingImages/${drawing.id}/imageData`).once("value"), db.ref(`drawingThumbnails/${drawing.id}/imageData`).once("value")]);
+      if (!imageCheck.exists() || !thumbnailCheck.exists()) throw new Error("저장 확인 실패");
+      await db.ref(`drawings/${drawing.id}`).update({ imageData: null, imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true });
+      totals.success++;
+    } catch (error) { totals.failed++; console.error("[gallery migration]", drawing.id, error); }
+  }
+  const saved = Math.max(0, totals.original - totals.converted);
+  status.innerHTML = `<p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
+  nextButton.disabled = items.length < IMAGE_OPTIONS.migrationBatch;
 }
 
 async function loadRanking(type = state.rankingType) {
@@ -1077,6 +1350,7 @@ async function renderManage() {
       return snap.exists() ? { ...(snap.val() || {}), id } : null;
     }));
     const list = all.filter(d => d && d.status === state.manageStatus).sort((a, b) => b.createdAt - a.createdAt);
+    await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
     appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
     document.querySelectorAll("[data-status]").forEach(button => button.onclick = () => { state.manageStatus = button.dataset.status; renderManage(); });
     document.querySelectorAll("[data-edit]").forEach(button => button.onclick = () => {
@@ -1364,8 +1638,9 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   await claimAnswerRewards(resolvedId, result.snapshot.val());
   return outcome;
 }
-async function toggleLike(drawingId) {
-  const drawing = (await db.ref(`drawings/${drawingId}`).once("value")).val();
+async function toggleLike(drawingId, cachedDrawing = null) {
+  const started = performance.now();
+  const drawing = cachedDrawing || (await db.ref(`drawings/${drawingId}`).once("value")).val();
   if (!drawing || !["solved", "expired"].includes(drawing.status)) throw new Error("좋아요를 누를 수 없는 그림이에요.");
   if (drawing.drawerId === state.user.id) throw new Error("내 그림에는 좋아요를 누를 수 없어요.");
   let liked = false;
@@ -1374,7 +1649,16 @@ async function toggleLike(drawingId) {
     return liked ? true : null;
   }, null, false);
   if (!result.committed) throw new Error("좋아요를 바꾸지 못했어요.");
+  const previous = state.likeCache.get(drawingId) || { count: 0, liked: !liked };
+  const next = { liked, count: Math.max(0, previous.count + (liked ? 1 : -1)) };
+  state.likeCache.set(drawingId, next);
+  for (const list of Object.values(state.galleryLists)) {
+    const item = list.find(entry => entry.id === drawingId);
+    if (item) Object.assign(item, { isLiked: next.liked, likeCount: next.count });
+  }
+  console.info(`[gallery] like ${Math.round(performance.now() - started)}ms · server list reread=false`);
   showToast(liked ? "좋아요를 눌렀어요!" : "좋아요를 취소했어요.");
+  return next;
 }
 async function toggleFeedbackReaction(id, next) {
   const owner = (await db.ref(`feedbackOwners/${id}/${state.user.id}`).once("value")).val() === true;

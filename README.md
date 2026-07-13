@@ -36,6 +36,15 @@ v1.0.6: PC 마우스 드로잉 중 화면 이동 문제 개선
 
 v1.0.7: 긴 제시어 카테고리 저장 오류 수정, 다른 제시어 반복 방지, 영화·애니메이션 제시어 추가
 
+## v1.1.0 전시장 이미지 최적화
+
+- 상세 이미지는 drawingImages/{drawingId}/imageData, 240px 썸네일은 drawingThumbnails/{drawingId}/imageData에 저장합니다.
+- 새 그림은 WebP와 PNG 중 더 작은 상세 이미지를 선택하며, 전시장에서는 화면 가까이 온 썸네일부터 불러옵니다.
+- Firebase Storage 없이 Realtime Database만 사용하므로 Spark 무료 플랜에서 운영할 수 있습니다.
+- 기존 그림 변환은 관리자에게만 보이는 전시장의 **기존 그림 최적화**에서 실행합니다.
+- 변환 전 Realtime Database JSON 백업을 받고, 5~10개를 먼저 시험한 뒤 나머지를 10개 단위로 처리하세요.
+- 배포 전 database.rules.json의 새 Rules를 Firebase Console에 먼저 적용해야 합니다.
+
 v1.0.4: 48시간 지난 미해결 그림 표시 문제 수정, 기본 제시어 확장
 
 ## 실행하기

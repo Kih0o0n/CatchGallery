@@ -119,13 +119,14 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .gallery-screen .gallery-controls { gap: 7px; margin: 9px 0; }
 .gallery-screen .frame { padding: 7px; border-width: 6px; }
 .gallery-screen .frame-image { height: min(42dvh, 420px); aspect-ratio: auto; }
+.gallery-screen .detail-slot { height: min(42dvh, 420px); aspect-ratio: auto; }
 .gallery-screen .frame-nav { margin: 7px 0; }
 .gallery-screen .frame-nav .button { min-height: 42px; padding: 8px 12px; }
 .gallery-screen .frame-info { padding: 10px 12px; border-radius: 15px; }
 .gallery-screen .secret-word { padding: 8px; }
 .gallery-screen .frame-info .meta { margin: 7px 0; }
 .thumbnail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-.thumbnail-wrap { min-width: 0; }
+.thumbnail-wrap { min-width: 0; position: relative; }
 .thumbnail { width: 100%; border: 1px solid var(--line); background: white; border-radius: 14px; padding: 5px; text-align: left; box-shadow: 0 4px 12px rgba(0,0,0,.05); }
 .thumbnail-wrap.has-likes .thumbnail,
 .frame.has-likes {
@@ -140,15 +141,27 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
   .thumbnail-wrap.has-likes .thumbnail,
   .frame.has-likes { animation: none; }
 }
-.thumbnail img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 11px; }
+.gallery-image-slot { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 11px; background: #eeeae8; display: grid; place-items: center; }
+.gallery-image-slot img { width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .18s ease; }
+.gallery-image-slot img.loaded { opacity: 1; }
+.gallery-image-slot .image-loading { position: absolute; color: #968d89; font-size: 10px; }
+.detail-slot { border-radius: 16px; background: white; }
+.detail-slot .frame-image { height: 100%; aspect-ratio: 1; }
+.image-retry { border: 0; border-radius: 12px; padding: 8px; color: var(--muted); background: #fff; font-size: 11px; }
+.thumbnail-like-button { position: absolute; right: 7px; bottom: 24px; z-index: 2; min-width: 42px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; padding: 4px 7px; background: rgba(255,255,255,.92); box-shadow: 0 2px 8px rgba(0,0,0,.12); font-size: 11px; }
+.thumbnail-like-button.is-liked .heart { color: #ef4444; }
+.thumbnail-like-button:disabled { opacity: .65; }
 .thumbnail small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .thumbnail-wrap .admin-delete-button { width: 100%; min-height: 34px; margin-top: 4px; padding: 4px; font-size: 11px; }
 .gallery-detail > h2, .gallery-detail > .muted, .gallery-detail > .tabs, .gallery-detail > .gallery-controls { display: none; }
 .gallery-detail .frame-image { height: min(48dvh, 440px); }
+.gallery-detail .detail-slot { height: min(48dvh, 440px); }
 .gallery-detail .frame-info { padding: 8px 10px; }
 .gallery-detail .frame-info .button { min-height: 40px; padding: 7px 10px; }
 .like-button .heart, .thumbnail-like .heart { display: inline-block; font-size: 1.15em; }
 .like-button.is-liked .heart, .thumbnail-like.is-liked .heart { color: #ef4444; }
+.migration-open { margin-bottom: 10px; }
+.migration-modal [data-migration-status] { min-height: 76px; padding: 10px; border-radius: 12px; background: #f7f3f1; margin-bottom: 10px; }
 .rank-row { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 10px; padding: 14px; border-radius: 17px; margin-bottom: 8px; background: white; border: 1px solid var(--line); }
 .rank-row.mine { background: #fff4ca; border-color: #f0ce68; }.rank-num { font: 22px Jua, sans-serif; text-align: center; }.rank-score { font-weight: 700; color: #e2677e; }
 .status-tabs { overflow-x: auto; justify-content: flex-start; }.status-tabs button { min-width: 82px; }

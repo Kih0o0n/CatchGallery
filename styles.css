@@ -222,8 +222,11 @@ body.drawing-scroll-lock {
   touch-action: none !important;
   -webkit-user-select: none !important;
   user-select: none !important;
+  -webkit-user-drag: none;
   -webkit-touch-callout: none !important;
 }
+
+#drawingCanvas { cursor: crosshair; }
 
 @media (max-width: 699px) {
   .draw-screen {

@@ -258,6 +258,7 @@ const state = {
   canvas: null,
   ctx: null,
   drawing: false,
+  activePointerId: null,
   dirty: false,
   history: [],
   publishing: false,
@@ -331,16 +332,14 @@ function route(name, options = {}) {
   }
   state.route = name;
   if (name !== "draw") state.editDrawing = null;
-  history.pushState({ route: name }, "", `#${name}`);
+  history.pushState({ route: name, galleryDetail: false }, "", `#${name}`);
   renderRoute(options);
 }
 
-window.addEventListener("popstate", () => {
+window.addEventListener("popstate", event => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
-  if (name === "gallery" && state.route !== "gallery") {
-    state.galleryView = "thumb";
-    state.galleryIndex = 0;
-  }
+  if (name === "gallery") state.galleryView = event.state?.galleryDetail ? "frame" : "thumb";
+  if (name === "gallery" && state.route !== "gallery") state.galleryIndex = 0;
   state.route = name;
   renderRoute();
 });
@@ -348,7 +347,10 @@ document.addEventListener("click", e => {
   const target = e.target.closest("[data-route]");
   if (target) route(target.dataset.route);
 });
-document.querySelector("#backButton").addEventListener("click", () => route("home"));
+document.querySelector("#backButton").addEventListener("click", () => {
+  if (state.route === "gallery" && state.galleryView === "frame") history.back();
+  else route("home");
+});
 
 function normalizeNickname(value) { return value.trim().normalize("NFC"); }
 function nicknameKey(value) {
@@ -583,7 +585,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.4</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.5</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -713,18 +715,20 @@ function setupCanvas(imageData) {
   state.ctx.lineWidth = 9;
   state.history = [];
   state.dirty = false;
+  state.activePointerId = null;
 
   const pos = event => {
     const rect = state.canvas.getBoundingClientRect();
-    const point = event.touches?.[0] || event.changedTouches?.[0] || event;
     return [
-      (point.clientX - rect.left) * state.canvas.width / rect.width,
-      (point.clientY - rect.top) * state.canvas.height / rect.height
+      (event.clientX - rect.left) * state.canvas.width / rect.width,
+      (event.clientY - rect.top) * state.canvas.height / rect.height
     ];
   };
   const start = event => {
+    if (state.activePointerId !== null || event.isPrimary === false) return;
     preventIfCancelable(event);
     lockDrawingScroll();
+    state.activePointerId = event.pointerId;
     state.canvas.setPointerCapture?.(event.pointerId);
     saveHistory();
     state.drawing = true;
@@ -733,7 +737,7 @@ function setupCanvas(imageData) {
     state.ctx.moveTo(x, y);
   };
   const move = event => {
-    if (!state.drawing) return;
+    if (!state.drawing || event.pointerId !== state.activePointerId) return;
     preventIfCancelable(event);
     const [x, y] = pos(event);
     const brush = document.querySelector("#brushSize");
@@ -743,9 +747,18 @@ function setupCanvas(imageData) {
     state.dirty = true;
   };
   const end = event => {
+    if (event.pointerId !== state.activePointerId) return;
     if (state.drawing) preventIfCancelable(event);
-    state.canvas.releasePointerCapture?.(event.pointerId);
+    if (state.canvas.hasPointerCapture?.(event.pointerId)) state.canvas.releasePointerCapture(event.pointerId);
     state.drawing = false;
+    state.activePointerId = null;
+    state.ctx.closePath();
+    unlockDrawingScroll();
+  };
+  const lost = event => {
+    if (event.pointerId !== state.activePointerId) return;
+    state.drawing = false;
+    state.activePointerId = null;
     state.ctx.closePath();
     unlockDrawingScroll();
   };
@@ -754,11 +767,7 @@ function setupCanvas(imageData) {
   state.canvas.addEventListener("pointermove", move, { passive: false });
   state.canvas.addEventListener("pointerup", end, { passive: false });
   state.canvas.addEventListener("pointercancel", end, { passive: false });
-  state.canvas.addEventListener("pointerleave", end, { passive: false });
-  state.canvas.addEventListener("touchstart", event => { preventIfCancelable(event); lockDrawingScroll(); }, { passive: false });
-  state.canvas.addEventListener("touchmove", preventIfCancelable, { passive: false });
-  state.canvas.addEventListener("touchend", end, { passive: false });
-  state.canvas.addEventListener("touchcancel", end, { passive: false });
+  state.canvas.addEventListener("lostpointercapture", lost);
 
   if (imageData) {
     const img = new Image();
@@ -946,7 +955,7 @@ async function renderGallery() {
   try {
     const list = await loadGalleryDrawings();
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
-    appEl.innerHTML = `<section class="screen gallery-screen"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><div class="view-toggle"><button data-view="thumb" class="${state.galleryView === "thumb" ? "active" : ""}">썸네일 보기</button><button data-view="frame" class="${state.galleryView === "frame" ? "active" : ""}">액자 보기</button></div><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div><div id="galleryContent">${list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.")}</div></section>`;
+    appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div><div id="galleryContent">${list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.")}</div></section>`;
     bindGallery(list);
   } catch (error) {
     console.error(error);
@@ -973,13 +982,12 @@ function galleryThumbs(list) {
   return `<div class="thumbnail-grid">${list.map((d, i) => `<div class="thumbnail-wrap"><button class="thumbnail" data-thumb="${i}"><img src="${d.imageData}" alt="전시 그림"><small><span class="thumbnail-like ${d.isLiked ? "is-liked" : ""}"><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> ${Number(d.likeCount) || 0}</span> · ${escapeHtml(drawerName(d))}</small></button>${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`).join("")}</div>`;
 }
 function bindGallery(list) {
-  document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => { state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; renderGallery(); });
-  document.querySelectorAll("[data-view]").forEach(button => button.onclick = () => { state.galleryView = button.dataset.view; renderGallery(); });
+  document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => { state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; state.galleryView = "thumb"; history.replaceState({ route: "gallery", galleryDetail: false }, "", "#gallery"); renderGallery(); });
   gallerySort.onchange = () => { state.gallerySort = gallerySort.value; state.galleryIndex = 0; renderGallery(); };
   document.querySelector("[data-prev]")?.addEventListener("click", () => { state.galleryIndex--; renderGallery(); });
   document.querySelector("[data-next]")?.addEventListener("click", () => { state.galleryIndex++; renderGallery(); });
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
-  document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => { state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame"; renderGallery(); });
+  document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => { state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame"; history.pushState({ route: "gallery", galleryDetail: true }, "", "#gallery"); renderGallery(); });
   document.querySelector("[data-like]")?.addEventListener("click", async e => {
     const button = e.currentTarget;
     if (button.disabled) return;

@@ -124,9 +124,16 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .gallery-screen .frame-info { padding: 10px 12px; border-radius: 15px; }
 .gallery-screen .secret-word { padding: 8px; }
 .gallery-screen .frame-info .meta { margin: 7px 0; }
-.thumbnail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.thumbnail { border: 1px solid var(--line); background: white; border-radius: 17px; padding: 8px; text-align: left; box-shadow: 0 5px 16px rgba(0,0,0,.05); }
+.thumbnail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.thumbnail-wrap { min-width: 0; }
+.thumbnail { width: 100%; border: 1px solid var(--line); background: white; border-radius: 14px; padding: 5px; text-align: left; box-shadow: 0 4px 12px rgba(0,0,0,.05); }
 .thumbnail img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 11px; }
+.thumbnail small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.thumbnail-wrap .admin-delete-button { width: 100%; min-height: 34px; margin-top: 4px; padding: 4px; font-size: 11px; }
+.gallery-detail > h2, .gallery-detail > .muted, .gallery-detail > .tabs, .gallery-detail > .gallery-controls { display: none; }
+.gallery-detail .frame-image { height: min(48dvh, 440px); }
+.gallery-detail .frame-info { padding: 8px 10px; }
+.gallery-detail .frame-info .button { min-height: 40px; padding: 7px 10px; }
 .like-button .heart, .thumbnail-like .heart { display: inline-block; font-size: 1.15em; }
 .like-button.is-liked .heart, .thumbnail-like.is-liked .heart { color: #ef4444; }
 .rank-row { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 10px; padding: 14px; border-radius: 17px; margin-bottom: 8px; background: white; border: 1px solid var(--line); }

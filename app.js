@@ -232,7 +232,9 @@ const WORDS = Object.entries({
   "상상 / 판타지": { 보물상자: "보물상자,보물", 성: "성,궁전", 마법봉: "마법봉", 투명망토: "투명망토", 타임머신: "타임머신", 수정구슬: "수정구슬", 보물지도: "보물지도" },
   "계절 / 행사": { 크리스마스: "크리스마스", 눈사람: "눈사람", 생일: "생일", 생일파티: "생일파티,생일 파티", 선물: "선물", 할로윈: "할로윈", 추석: "추석", 송편: "송편", 설날: "설날", 세배: "세배", 졸업식: "졸업식", 소풍: "소풍", 운동회: "운동회", 방학: "방학", 입학식: "입학식", 어린이날: "어린이날", 불꽃놀이: "불꽃놀이,폭죽", 벚꽃: "벚꽃" },
   "전자기기 / 기계": { 휴대폰: "휴대폰,핸드폰,스마트폰", 컴퓨터: "컴퓨터", 노트북: "노트북", 텔레비전: "텔레비전,TV,티비", 카메라: "카메라", 이어폰: "이어폰", 헤드폰: "헤드폰", 마이크: "마이크", 스피커: "스피커", 리모컨: "리모컨", 선풍기: "선풍기", 에어컨: "에어컨", 로봇청소기: "로봇청소기", 드론: "드론", 충전기: "충전기", 게임기: "게임기", 프린터: "프린터", 전기밥솥: "전기밥솥,밥솥", 자판기: "자판기", 계산기: "계산기" },
-  "몸 / 옷 / 장신구": { 손: "손", 발: "발", 눈: "눈", 코: "코", 입: "입", 귀: "귀", 머리카락: "머리카락,머리", 치아: "치아,이빨", 티셔츠: "티셔츠,티", 바지: "바지", 치마: "치마", 원피스: "원피스", 목도리: "목도리", 장갑: "장갑", 왕관: "왕관", 안경: "안경", 마스크: "마스크", 반지: "반지", 목걸이: "목걸이" }
+  "몸 / 옷 / 장신구": { 손: "손", 발: "발", 눈: "눈", 코: "코", 입: "입", 귀: "귀", 머리카락: "머리카락,머리", 치아: "치아,이빨", 티셔츠: "티셔츠,티", 바지: "바지", 치마: "치마", 원피스: "원피스", 목도리: "목도리", 장갑: "장갑", 왕관: "왕관", 안경: "안경", 마스크: "마스크", 반지: "반지", 목걸이: "목걸이" },
+  "영화": { 기생충: "기생충", 부산행: "부산행", 범죄도시: "범죄도시", 극한직업: "극한직업", "엽기적인 그녀": "엽기적인 그녀", 타이타닉: "타이타닉", 인터스텔라: "인터스텔라", 인셉션: "인셉션", 매트릭스: "매트릭스", 라라랜드: "라라랜드", 어벤져스: "어벤져스,어벤저스", 아이언맨: "아이언맨", 스파이더맨: "스파이더맨", 배트맨: "배트맨", 조커: "조커", "해리 포터": "해리 포터", "반지의 제왕": "반지의 제왕", "쥬라기 공원": "쥬라기 공원", 스타워즈: "스타워즈", "미션 임파서블": "미션 임파서블", 탑건: "탑건", "캐리비안의 해적": "캐리비안의 해적", "나 홀로 집에": "나 홀로 집에", "트루먼 쇼": "트루먼 쇼", 킹콩: "킹콩", 터미네이터: "터미네이터", 아바타: "아바타", "백 투 더 퓨처": "백 투 더 퓨처", "쇼생크 탈출": "쇼생크 탈출", 레옹: "레옹" },
+  "애니메이션": { 원피스: "원피스", 나루토: "나루토", 드래곤볼: "드래곤볼", 포켓몬스터: "포켓몬스터,포켓몬", 디지몬: "디지몬", "명탐정 코난": "명탐정 코난,코난", "짱구는 못말려": "짱구는 못말려,짱구", 슬램덩크: "슬램덩크", "진격의 거인": "진격의 거인,진격거", "귀멸의 칼날": "귀멸의 칼날,귀칼", 주술회전: "주술회전", 데스노트: "데스노트", "강철의 연금술사": "강철의 연금술사,강연금", 에반게리온: "에반게리온,에바", 세일러문: "세일러문", "카드캡터 체리": "카드캡터 체리", 이누야샤: "이누야샤", 하이큐: "하이큐", 체인소맨: "체인소맨", "스파이 패밀리": "스파이 패밀리", "센과 치히로의 행방불명": "센과 치히로의 행방불명", "하울의 움직이는 성": "하울의 움직이는 성", "이웃집 토토로": "이웃집 토토로", "천공의 성 라퓨타": "천공의 성 라퓨타", "너의 이름은": "너의 이름은", 아키라: "아키라", "카우보이 비밥": "카우보이 비밥", 헌터헌터: "헌터헌터,헌터×헌터,헌터X헌터", "사이버펑크 엣지러너": "사이버펑크 엣지러너,사이버펑크: 엣지러너" }
 }).flatMap(([category, entries]) => Object.entries(entries).map(([word, answerText]) => ({ category, word, answers: answerText.split(",") }))).filter((entry, index, list) => list.findIndex(candidate => candidate.word === entry.word) === index);
 
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
@@ -247,6 +249,7 @@ const state = {
   authReady: false,
   route: "login",
   word: null,
+  seenWordKeys: new Set(),
   hintUsed: {},
   galleryTab: "solved",
   galleryView: "thumb",
@@ -311,15 +314,22 @@ function formatTime(expiresAt) {
   const h = Math.floor(ms / 3600000);
   return h < 1 ? "1시간 미만" : `${h}시간`;
 }
+function wordKey(entry) { return `${entry.category}\u0000${entry.word}`; }
 function randomWord() {
-  let next;
-  do {
-    next = WORDS[Math.floor(Math.random() * WORDS.length)];
-  } while (WORDS.length > 1 && state.word?.word === next.word);
+  if (!WORDS.length) return;
+  const currentKey = state.word && !state.word.isCustomWord ? wordKey(state.word) : null;
+  let available = WORDS.filter(entry => !state.seenWordKeys.has(wordKey(entry)));
+  if (!available.length) {
+    state.seenWordKeys.clear();
+    available = WORDS.length > 1 && currentKey ? WORDS.filter(entry => wordKey(entry) !== currentKey) : WORDS;
+  }
+  const next = available[Math.floor(Math.random() * available.length)];
+  state.seenWordKeys.add(wordKey(next));
   state.word = { ...next, answers: [...next.answers], isCustomWord: false };
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
+function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20; }
 function isConfigured() {
   if (initFirebase()) return true;
   showToast("Firebase 설정을 먼저 연결해 주세요.");
@@ -330,6 +340,10 @@ function route(name, options = {}) {
     state.galleryView = "thumb";
     state.galleryIndex = 0;
   }
+  if (name === "draw" && state.route !== "draw") {
+    state.seenWordKeys.clear();
+    if (!state.editDrawing) state.word = null;
+  }
   state.route = name;
   if (name !== "draw") state.editDrawing = null;
   history.pushState({ route: name, galleryDetail: false }, "", `#${name}`);
@@ -338,6 +352,10 @@ function route(name, options = {}) {
 
 window.addEventListener("popstate", event => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
+  if (name === "draw" && state.route !== "draw") {
+    state.seenWordKeys.clear();
+    if (!state.editDrawing) state.word = null;
+  }
   if (name === "gallery") state.galleryView = event.state?.galleryDetail ? "frame" : "thumb";
   if (name === "gallery" && state.route !== "gallery") state.galleryIndex = 0;
   state.route = name;
@@ -585,7 +603,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.6</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.0.7</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -600,7 +618,7 @@ function renderDraw() {
   if (!state.word) randomWord();
   const edit = state.editDrawing;
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
-  const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="8" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
+  const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
   appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
@@ -636,7 +654,7 @@ function renderDraw() {
       const category = customCategory.value.trim();
       const word = customWord.value.trim();
       const rawAnswers = customAnswers.value.split(",").map(value => value.trim()).filter(Boolean);
-      if (textLength(category) < 1 || textLength(category) > 8) return showToast("카테고리는 1~8자로 입력해 주세요.");
+      if (!isValidCategory(category)) return showToast("카테고리는 1~20자로 입력해 주세요.");
       if (textLength(word) < 1 || textLength(word) > 12) return showToast("제시어는 1~12자로 입력해 주세요.");
       if (rawAnswers.length > 5) return showToast("허용 정답은 최대 5개까지 입력할 수 있어요.");
       if (rawAnswers.some(value => textLength(value) < 1 || textLength(value) > 12)) return showToast("허용 정답은 각각 1~12자로 입력해 주세요.");
@@ -668,6 +686,7 @@ function renderDraw() {
       showToast(edit ? "수정했어요!" : "그림을 게시했어요!");
       route("manage");
     } catch (error) {
+      console.error("그림 저장 실패:", error?.code || "unknown", error);
       showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
       saveDrawing.disabled = false;
       saveDrawing.textContent = edit ? "수정 저장하기" : "게시하기";
@@ -793,6 +812,7 @@ function clearCanvasBoard(track) {
   state.dirty = !!track;
 }
 async function publishDrawing() {
+  if (!isValidCategory(state.word?.category)) throw new Error("invalid-category");
   const now = serverNow();
   const ref = db.ref("drawings").push();
   const id = ref.key;

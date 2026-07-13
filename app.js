@@ -684,7 +684,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.1</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.2</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -1266,6 +1266,27 @@ function openMigrationPanel() {
     await runMigrationBatch(root);
   };
 }
+function isValidMigrationCursor(cursor) {
+  return typeof cursor === "string" && cursor.trim().length > 0 && !/[.#$\/[\]\u0000-\u001F\u007F]/.test(cursor);
+}
+function buildMigrationQuery(ref, cursor, batchSize) {
+  let query = ref.orderByKey();
+  if (isValidMigrationCursor(cursor)) return query.startAt(cursor).limitToFirst(batchSize + 1);
+  return query.limitToFirst(batchSize);
+}
+function migrationBatchItems(snapshot, cursor, batchSize) {
+  const items = [];
+  let first = true;
+  snapshot.forEach(child => {
+    if (first && isValidMigrationCursor(cursor) && child.key === cursor) { first = false; return; }
+    first = false;
+    items.push({ ...(child.val() || {}), id: child.key });
+  });
+  return items.slice(0, batchSize);
+}
+function migrationNextCursor(batchStartCursor, items, failed) {
+  return failed || !items.length ? batchStartCursor : items[items.length - 1].id;
+}
 function migrationTimeout(promise, stage) {
   let timer;
   return Promise.race([
@@ -1296,16 +1317,15 @@ async function runMigrationBatch(root) {
     stage = "그림 목록 조회";
     status.textContent = "처리할 그림을 불러오는 중...";
     const batchStartCursor = state.migrationCursor;
-    const query = db.ref("drawings").orderByKey().startAt(state.migrationCursor || "").limitToFirst(state.migrationCursor ? IMAGE_OPTIONS.migrationBatch + 1 : IMAGE_OPTIONS.migrationBatch);
+    const query = buildMigrationQuery(db.ref("drawings"), batchStartCursor, IMAGE_OPTIONS.migrationBatch);
     const snap = await migrationTimeout(query.once("value"), stage);
-    const items = [];
-    snap.forEach(child => { if (child.key !== state.migrationCursor) items.push({ ...(child.val() || {}), id: child.key }); });
+    const items = migrationBatchItems(snap, batchStartCursor, IMAGE_OPTIONS.migrationBatch);
     if (!items.length) {
       status.textContent = state.migrationCursor ? "모든 기존 그림의 최적화가 완료되었습니다." : "최적화할 기존 그림이 없습니다.";
       return;
     }
     for (let index = 0; index < items.length; index++) {
-      const drawing = items[index]; state.migrationCursor = drawing.id;
+      const drawing = items[index];
       if (!drawing.imageData) { totals.skipped++; continue; }
       try {
         let optimized = null;
@@ -1331,7 +1351,7 @@ async function runMigrationBatch(root) {
     const saved = Math.max(0, totals.original - totals.converted);
     const resultTitle = totals.failed > 0 ? "최적화 중 오류가 발생했습니다." : totals.success === 0 ? "모든 기존 그림의 최적화가 완료되었습니다." : "최적화 완료";
     status.innerHTML = `<p>${resultTitle}</p><p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
-    if (totals.failed) state.migrationCursor = batchStartCursor;
+    state.migrationCursor = migrationNextCursor(batchStartCursor, items, totals.failed > 0);
     canContinue = totals.failed > 0 || items.length >= IMAGE_OPTIONS.migrationBatch;
   } catch (error) {
     status.textContent = migrationErrorMessage(error, stage);

@@ -99,12 +99,15 @@ function classList(initial = []) {
 }
 
 function saveHarness({ edit = null, fail = false, deferred = false } = {}) {
-  const state = { dirty: true, publishing: false, drawingPublished: false, editDrawing: edit, word: { word: "제시어" } };
+  const state = { dirty: true, publishing: false, drawingPublished: false, editDrawing: edit, word: { word: "제시어" }, canvas: {}, saveOperationId: 0, activeSaveOperationId: null };
   const calls = { publish: 0, update: 0, modal: 0, routes: [], toasts: [] };
   let release;
+  let transitionCurrent = true;
   const wait = deferred ? new Promise(resolve => { release = resolve; }) : null;
   const dependencies = {
     state,
+    routeTransitionId: 1,
+    isTransitionCurrent: () => transitionCurrent,
     showToast: message => calls.toasts.push(message),
     updateDrawing: async () => { calls.update += 1; if (fail) throw new Error("save failed"); },
     publishDrawing: async () => { calls.publish += 1; if (wait) await wait; if (fail) throw new Error("save failed"); },
@@ -115,7 +118,20 @@ function saveHarness({ edit = null, fail = false, deferred = false } = {}) {
   };
   const names = Object.keys(dependencies);
   const saveDrawingDraft = Function(...names, `"use strict"; ${saveSource}; return saveDrawingDraft;`)(...names.map(name => dependencies[name]));
-  return { state, calls, release, button: { disabled: false, textContent: edit ? "수정 저장하기" : "게시하기" }, run: button => saveDrawingDraft(edit, button) };
+  return { state, calls, release, invalidate: () => { transitionCurrent = false; state.activeSaveOperationId = null; }, button: { disabled: false, textContent: edit ? "수정 저장하기" : "게시하기" }, run: button => saveDrawingDraft(edit, button) };
+}
+
+{
+  const harness = saveHarness({ deferred: true });
+  const pending = harness.run(harness.button);
+  harness.invalidate();
+  harness.state.publishing = true;
+  harness.release();
+  assert.equal(await pending, "cancelled");
+  assert.equal(harness.state.publishing, true, "an old save finally must not clear a newer canvas save state");
+  assert.equal(harness.calls.modal, 0, "an old save must not show a completion modal");
+  assert.deepEqual(harness.calls.toasts, [], "an old save must not show a toast");
+  assert.deepEqual(harness.calls.routes, [], "an old save must not navigate");
 }
 
 {

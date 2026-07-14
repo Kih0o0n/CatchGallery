@@ -34,13 +34,13 @@ function fakeCanvas(context = fakeContext()) {
     setPointerCapture(id) { this.captures.add(id); }, hasPointerCapture(id) { return this.captures.has(id); }, releasePointerCapture(id) { this.captures.delete(id); this.releaseCount = (this.releaseCount || 0) + 1; }
   };
 }
-const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "canvasPoint"];
+const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "canvasPoint", "sameCanvasPoint"];
 function historyHarness() {
   const screenContext = fakeContext();
   const screen = fakeCanvas(screenContext);
   const bases = [];
   const document = { createElement: () => { const canvas = fakeCanvas(); bases.push(canvas); return canvas; } };
-  const state = { canvas: screen, ctx: screenContext, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, activeStroke: null, canvasRect: null, brushInput: null, drawing: false, activePointerId: null, dirty: false };
+  const state = { canvas: screen, ctx: screenContext, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, drawing: false, activePointerId: null, dirty: false };
   const code = actionNames.map(pick).join("\n");
   const api = Function("state", "document", "DRAWING_HISTORY_LIMIT", `"use strict"; ${code}; return { ${actionNames.join(",")} };`)(state, document, 15);
   api.initializeCanvasHistory(screen, true);
@@ -99,18 +99,18 @@ function setupHarness({ imageData = null, current = true } = {}) {
   const baseCanvas = fakeCanvas(baseContext);
   const brush = { value: "9" };
   let drawingQueries = 0, brushQueries = 0, locks = 0, unlocks = 0, image;
-  const state = { route: "draw", canvas: null, ctx: null, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, activeStroke: null, canvasRect: null, brushInput: null, drawing: false, activePointerId: null, dirty: false, editImageRequestId: 0 };
+  const state = { route: "draw", canvas: null, ctx: null, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, drawing: false, activePointerId: null, dirty: false, editImageRequestId: 0 };
   const document = {
     querySelector(selector) { if (selector === "#drawingCanvas") { drawingQueries++; return canvas; } if (selector === "#brushSize") { brushQueries++; return brush; } return null; },
     createElement: () => baseCanvas
   };
   class TestImage { constructor() { image = this; } set src(value) { this.value = value; } }
   const helperCode = actionNames.map(pick).join("\n");
-  const setupCanvas = Function("state", "document", "DRAWING_HISTORY_LIMIT", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return setupCanvas;`)(
+  const setupApi = Function("state", "document", "DRAWING_HISTORY_LIMIT", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory };`)(
     state, document, 15, () => {}, event => event.preventDefault(), () => { locks++; }, () => { unlocks++; }, TestImage, 1, () => current, { warn() {} }
   );
-  setupCanvas(imageData);
-  return { state, canvas, context, baseCanvas, baseContext, brush, image: () => image, counts: () => ({ drawingQueries, brushQueries, locks, unlocks }) };
+  setupApi.setupCanvas(imageData);
+  return { state, canvas, context, baseCanvas, baseContext, brush, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, counts: () => ({ drawingQueries, brushQueries, locks, unlocks }) };
 }
 
 {
@@ -178,6 +178,120 @@ function setupHarness({ imageData = null, current = true } = {}) {
 }
 
 {
+  const h = setupHarness({ imageData: "detail-active" });
+  h.canvas.emit("pointerdown", { clientX: 20, clientY: 30 });
+  h.canvas.emit("pointermove", { clientX: 30, clientY: 40 });
+  const screenCallsBeforeLoad = h.context.calls.length;
+  const activeStroke = h.state.activeStroke;
+  h.image().onload();
+  assert.equal(h.state.historyBaseReady, true);
+  assert.equal(h.state.historyRedrawPending, true);
+  assert.equal(h.state.activeStroke, activeStroke);
+  assert.equal(h.state.history.length, 0);
+  assert.equal(h.context.calls.length, screenCallsBeforeLoad, "active image load must not clear or replay the screen path");
+  assert.equal(h.baseContext.calls.filter(call => call[0] === "drawImage").length, 1);
+  h.canvas.emit("pointermove", { clientX: 40, clientY: 50 });
+  h.canvas.emit("pointerup", { clientX: 40, clientY: 50 });
+  assert.equal(h.state.history.length, 1);
+  assert.deepEqual(h.state.history[0].points, [{ x: 20, y: 20 }, { x: 40, y: 40 }, { x: 60, y: 60 }]);
+  assert.equal(h.state.historyRedrawPending, false);
+  const drawIndex = h.context.calls.findIndex(call => call[0] === "drawImage");
+  assert.ok(drawIndex >= 0);
+  assert.ok(h.context.calls.slice(drawIndex + 1).some(call => call[0] === "stroke"), "the completed stroke replays above the edit base");
+  assert.equal(h.state.dirty, true);
+}
+
+{
+  const h = setupHarness({ imageData: "broken-active" });
+  h.canvas.emit("pointerdown");
+  h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  const screenCallsBeforeError = h.context.calls.length;
+  h.image().onerror();
+  assert.equal(h.state.historyBaseReady, true);
+  assert.equal(h.state.historyRedrawPending, true);
+  assert.equal(h.context.calls.length, screenCallsBeforeError);
+  h.canvas.emit("pointerup", { clientX: 20, clientY: 30 });
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.historyRedrawPending, false);
+  assert.ok(h.context.calls.some(call => call[0] === "stroke"));
+  assert.equal(h.state.dirty, true);
+}
+
+{
+  const h = setupHarness({ imageData: "detail-no-move" });
+  h.canvas.emit("pointerdown");
+  h.image().onload();
+  assert.equal(h.state.historyRedrawPending, true);
+  h.canvas.emit("pointerup");
+  assert.equal(h.state.history.length, 0);
+  assert.equal(h.state.dirty, false);
+  assert.equal(h.state.historyRedrawPending, false);
+  assert.equal(h.context.calls.filter(call => call[0] === "drawImage").length, 1);
+  assert.equal(h.context.calls.filter(call => call[0] === "stroke").length, 0);
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown");
+  h.canvas.emit("pointermove");
+  h.canvas.emit("pointermove");
+  h.canvas.emit("pointerup");
+  assert.equal(h.state.history.length, 0);
+  assert.equal(h.context.calls.filter(call => call[0] === "lineTo").length, 0);
+  assert.equal(h.context.calls.filter(call => call[0] === "stroke").length, 0);
+  assert.equal(h.state.dirty, false);
+}
+
+{
+  const h = setupHarness();
+  h.context.globalCompositeOperation = "destination-out";
+  h.context.strokeStyle = "purple";
+  h.brush.value = "17";
+  h.canvas.emit("pointerdown");
+  h.canvas.emit("pointermove");
+  h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  h.canvas.emit("pointermove", { clientX: 30, clientY: 40 });
+  h.canvas.emit("pointerup", { clientX: 30, clientY: 40 });
+  assert.equal(h.state.history.length, 1);
+  assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 20, y: 20 }, { x: 40, y: 40 }]);
+  assert.equal(h.context.calls.filter(call => call[0] === "lineTo").length, 2);
+  assert.equal(h.state.history[0].compositeOperation, "destination-out");
+  assert.equal(h.state.history[0].color, "purple");
+  assert.equal(h.state.history[0].width, 17);
+  assert.equal(h.state.dirty, true);
+}
+
+{
+  const h = setupHarness({ imageData: "detail-single-flush" });
+  h.canvas.emit("pointerdown"); h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  h.image().onload();
+  h.canvas.emit("pointerup", { clientX: 20, clientY: 30 });
+  const replayDraws = h.context.calls.filter(call => call[0] === "drawImage").length;
+  h.canvas.emit("lostpointercapture");
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.context.calls.filter(call => call[0] === "drawImage").length, replayDraws, "lost capture cannot flush a second time");
+  assert.equal(h.state.historyRedrawPending, false);
+  assert.equal(h.counts().unlocks, 1);
+}
+
+{
+  const h = setupHarness({ imageData: "cleanup-active" });
+  h.canvas.emit("pointerdown"); h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  h.image().onload();
+  assert.equal(h.state.historyRedrawPending, true);
+  const screenCalls = h.context.calls.length;
+  h.releaseCanvasHistory();
+  h.canvas.emit("pointerup", { clientX: 20, clientY: 30 });
+  h.image().onload(); h.image().onerror();
+  assert.equal(h.state.historyRedrawPending, false);
+  assert.equal(h.state.activeStroke, null);
+  assert.equal(h.state.historyBaseCanvas, null);
+  assert.equal(h.baseCanvas.width, 0); assert.equal(h.baseCanvas.height, 0);
+  assert.equal(h.context.calls.length, screenCalls, "late pointer and image events after cleanup cannot redraw the old canvas");
+}
+
+{
   const h = setupHarness({ imageData: "detail-original" });
   h.image().onload();
   assert.equal(h.state.historyBaseReady, true);
@@ -195,18 +309,25 @@ function setupHarness({ imageData = null, current = true } = {}) {
 
 {
   const h = setupHarness({ imageData: "stale", current: false });
+  h.canvas.emit("pointerdown"); h.canvas.emit("pointermove", { clientX: 20, clientY: 30 });
+  const screenCalls = structuredClone(h.context.calls);
   h.image().onload(); h.image().onerror();
   assert.equal(h.state.historyBaseReady, false);
+  assert.equal(h.state.historyRedrawPending, false);
   assert.equal(h.baseContext.calls.length, 0);
-  assert.equal(h.context.calls.filter(call => call[0] === "drawImage").length, 0);
+  assert.deepEqual(h.context.calls, screenCalls);
+  assert.equal(h.state.history.length, 0);
+  assert.equal(h.state.dirty, true);
 }
 
 {
   const h = historyHarness();
   h.state.activeStroke = { type: "stroke" }; h.state.canvasRect = {}; h.state.brushInput = {}; h.state.drawing = true; h.state.activePointerId = 2;
+  h.state.historyRedrawPending = true;
   h.api.releaseCanvasHistory();
   assert.equal(h.base.width, 0); assert.equal(h.base.height, 0);
   assert.deepEqual(h.state.history, []); assert.equal(h.state.historyBaseCanvas, null); assert.equal(h.state.historyBaseContext, null); assert.equal(h.state.activeStroke, null); assert.equal(h.state.canvasRect, null); assert.equal(h.state.brushInput, null); assert.equal(h.state.drawing, false); assert.equal(h.state.activePointerId, null);
+  assert.equal(h.state.historyRedrawPending, false);
   h.api.releaseCanvasHistory();
 }
 

@@ -291,6 +291,7 @@ const state = {
   historyBaseCanvas: null,
   historyBaseContext: null,
   historyBaseReady: false,
+  historyRedrawPending: false,
   activeStroke: null,
   canvasRect: null,
   brushInput: null,
@@ -954,6 +955,7 @@ function releaseCanvasHistory() {
   state.historyBaseCanvas = null;
   state.historyBaseContext = null;
   state.historyBaseReady = false;
+  state.historyRedrawPending = false;
   state.activeStroke = null;
   state.canvasRect = null;
   state.brushInput = null;
@@ -1015,12 +1017,28 @@ function redrawCanvasFromHistory() {
   state.ctx.lineCap = "round";
   state.ctx.lineJoin = "round";
 }
+function redrawCanvasWhenIdle() {
+  if (state.activeStroke) {
+    state.historyRedrawPending = true;
+    return false;
+  }
+  state.historyRedrawPending = false;
+  redrawCanvasFromHistory();
+  return true;
+}
+function flushPendingCanvasRedraw() {
+  if (!state.historyRedrawPending || state.activeStroke) return false;
+  state.historyRedrawPending = false;
+  redrawCanvasFromHistory();
+  return true;
+}
 function canvasPoint(event, rect, canvas = state.canvas) {
   return {
     x: (event.clientX - rect.left) * canvas.width / rect.width,
     y: (event.clientY - rect.top) * canvas.height / rect.height
   };
 }
+function sameCanvasPoint(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
 function setupCanvas(imageData) {
   bindDocumentDrawingScrollBlocker();
   state.canvas = document.querySelector("#drawingCanvas");
@@ -1062,6 +1080,8 @@ function setupCanvas(imageData) {
     if (!state.drawing || event.pointerId !== state.activePointerId || !state.activeStroke || !state.canvasRect) return;
     preventIfCancelable(event);
     const point = canvasPoint(event, state.canvasRect);
+    const lastPoint = state.activeStroke.points[state.activeStroke.points.length - 1];
+    if (sameCanvasPoint(lastPoint, point)) return;
     state.activeStroke.points.push(point);
     state.ctx.globalCompositeOperation = state.activeStroke.compositeOperation;
     state.ctx.strokeStyle = state.activeStroke.color;
@@ -1081,6 +1101,7 @@ function setupCanvas(imageData) {
     state.canvasRect = null;
     state.ctx.closePath();
     commitCanvasAction(stroke);
+    flushPendingCanvasRedraw();
     unlockDrawingScroll();
     if (releaseCapture && canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   };
@@ -1105,7 +1126,7 @@ function setupCanvas(imageData) {
       if (image) baseContext.drawImage(image, 0, 0, baseCanvas.width, baseCanvas.height);
       state.historyBaseReady = true;
       compactCanvasHistory();
-      redrawCanvasFromHistory();
+      redrawCanvasWhenIdle();
     };
     const img = new Image();
     img.onload = () => finishBase(img);

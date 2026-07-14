@@ -32,6 +32,7 @@ function drawingHelpers(state, overrides = {}) {
       state.historyBaseCanvas = null;
       state.historyBaseContext = null;
       state.historyBaseReady = false;
+      state.historyRedrawPending = false;
       state.activeStroke = null;
       state.canvasRect = null;
       state.brushInput = null;

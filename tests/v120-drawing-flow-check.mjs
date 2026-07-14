@@ -26,7 +26,19 @@ function drawingHelpers(state, overrides = {}) {
     randomWord: overrides.randomWord || (() => { state.word = { word: "새 제시어" }; }),
     renderDraw: overrides.renderDraw || (() => {}),
     route: overrides.route || (() => {}),
-    document: overrides.document || { querySelectorAll: () => [] }
+    document: overrides.document || { querySelectorAll: () => [] },
+    releaseCanvasHistory: overrides.releaseCanvasHistory || (() => {
+      state.history = [];
+      state.historyBaseCanvas = null;
+      state.historyBaseContext = null;
+      state.historyBaseReady = false;
+      state.historyRedrawPending = false;
+      state.activeStroke = null;
+      state.canvasRect = null;
+      state.brushInput = null;
+      state.drawing = false;
+      state.activePointerId = null;
+    })
   };
   const names = Object.keys(dependencies);
   return Function(...names, `"use strict"; ${drawingHelperSource}; return { resetDrawingDraft, startNewDrawing, selectDrawingColor };`)(...names.map(name => dependencies[name]));

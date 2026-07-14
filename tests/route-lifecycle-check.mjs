@@ -6,7 +6,7 @@ const requestSource = app.match(/function isTransitionCurrent[\s\S]*?(?=function
 const cleanupSource = app.match(/function cleanupScreenResources[\s\S]*?(?=function transitionRoute)/)?.[0];
 const transitionSource = app.match(/function transitionRoute[\s\S]*?(?=function route\()/)?.[0];
 const loaderSource = app.match(/function createGalleryLoader[\s\S]*?(?=function observeGalleryThumbnails)/)?.[0];
-const setupCanvasSource = app.match(/function setupCanvas[\s\S]*?(?=function saveHistory)/)?.[0];
+const setupCanvasSource = app.match(/function setupCanvas[\s\S]*?(?=function undoCanvas)/)?.[0];
 const galleryRenderSource = app.match(/async function renderGallery[\s\S]*?(?=async function adminDeleteDrawing)/)?.[0];
 const solveRenderSource = app.match(/async function renderSolve[\s\S]*?(?=function openDrawingCard)/)?.[0];
 const moveGallerySource = app.match(/function moveGalleryIndex[\s\S]*?(?=function bindGalleryContent)/)?.[0];
@@ -42,7 +42,7 @@ function deferred() {
     editImageRequestId: 4, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 7, dirty: true, activeSaveOperationId: 9, publishing: true
   };
-  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {});
+  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", "releaseCanvasHistory", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {}, () => { state.history = []; state.drawing = false; state.activePointerId = null; });
   cleanup();
   cleanup();
   assert.equal(disconnected, 1, "IntersectionObserver must be disconnected once and cleared");
@@ -99,8 +99,8 @@ function deferred() {
   const canvas = { isConnected: true, getContext: () => context, addEventListener: () => {} };
   const state = { route: "draw", canvas: null, ctx: null, history: [], dirty: false, activePointerId: null, editImageRequestId: 0 };
   class TestImage { set src(value) { this.value = value; image = this; } }
-  const setupCanvas = Function("state", "document", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "saveHistory", "Image", "routeTransitionId", "isTransitionCurrent", `${setupCanvasSource}; return setupCanvas;`)(
-    state, { querySelector: () => canvas }, () => {}, () => {}, () => {}, () => {}, () => {}, TestImage, 1, () => true
+  const setupCanvas = Function("state", "document", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasFromHistory", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${setupCanvasSource}; return setupCanvas;`)(
+    state, { querySelector: selector => selector === "#drawingCanvas" ? canvas : { value: 9 } }, () => {}, () => {}, () => {}, () => {}, () => { state.historyBaseCanvas = canvas; state.historyBaseContext = context; }, () => ({ x: 0, y: 0 }), () => {}, () => {}, () => {}, TestImage, 1, () => true, { warn: () => {} }
   );
   setupCanvas("data:image/png;base64,x");
   state.canvas = { isConnected: true };

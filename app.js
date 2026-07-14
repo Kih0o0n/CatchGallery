@@ -272,6 +272,10 @@ const state = {
   solveLoader: null,
   galleryObserver: null,
   galleryLoader: null,
+  manageDrawings: null,
+  manageObserver: null,
+  manageLoader: null,
+  manageEditRequestId: 0,
   migrationCursor: null,
   migrationRunning: false,
   manageStatus: "open",
@@ -479,6 +483,8 @@ function isConfigured() {
 }
 function cleanupScreenResources() {
   cancelSolveImageLoading();
+  cancelManageImageLoading();
+  state.manageDrawings = null;
   state.galleryObserver?.disconnect();
   state.galleryObserver = null;
   if (state.galleryLoader) {
@@ -1708,20 +1714,125 @@ async function deleteMyRanking() {
     [`scoreClaims/${state.user.id}`]: null
   });
 }
+function cancelManageImageLoading() {
+  state.manageObserver?.disconnect();
+  state.manageObserver = null;
+  if (state.manageLoader) {
+    state.manageLoader.cancelled = true;
+    state.manageLoader.queue.length = 0;
+    state.manageLoader.pendingWaiters.forEach(cancel => cancel());
+    state.manageLoader.pendingWaiters.clear();
+    state.manageLoader = null;
+  }
+  state.manageEditRequestId++;
+}
+function createManageLoader(request) {
+  cancelManageImageLoading();
+  const loader = { queue: [], active: 0, cancelled: false, transitionId: request.transitionId, request, pendingWaiters: new Set() };
+  state.manageLoader = loader;
+  return loader;
+}
+function isManageLoaderCurrent(loader) { return !loader.cancelled && state.manageLoader === loader && isScreenRequestCurrent(loader.request); }
+function runManageImageQueue(loader) {
+  while (!loader.cancelled && loader.active < IMAGE_OPTIONS.maxConcurrentLoads && loader.queue.length) {
+    loader.active++;
+    const task = loader.queue.shift();
+    Promise.resolve(task()).finally(() => { loader.active--; if (!loader.cancelled) runManageImageQueue(loader); });
+  }
+}
+function manageImageMarkup(id) { return `<img data-manage-image="${id}" alt="내 그림"><span class="image-loading">불러오는 중…</span>`; }
+function queueManageImage(loader, image, drawing) {
+  if (!image || !drawing || image.dataset.queued || !isManageLoaderCurrent(loader)) return;
+  image.dataset.queued = "true";
+  loader.queue.push(async () => {
+    try {
+      const src = await loadDrawingImage(drawing, "thumbnail");
+      if (!isManageLoaderCurrent(loader) || !image.isConnected) return;
+      const result = await waitForSolveImageLoad(image, src, loader);
+      if (result === "cancelled" || !isManageLoaderCurrent(loader) || !image.isConnected) return;
+      if (result !== "loaded") throw new Error("manage-image-render-failed");
+      const slot = image.parentElement;
+      if (!slot?.isConnected || slot.querySelector(`[data-manage-image="${drawing.id}"]`) !== image) return;
+      image.classList.add("loaded");
+      slot.querySelector(".image-loading")?.remove();
+    } catch (_) {
+      if (!isManageLoaderCurrent(loader) || !image.isConnected) return;
+      const slot = image.parentElement;
+      if (!slot?.isConnected || slot.querySelector(`[data-manage-image="${drawing.id}"]`) !== image) return;
+      slot.innerHTML = `<span class="image-error">이미지를 불러오지 못했어요.</span><button class="image-retry" data-manage-retry="${drawing.id}">다시 불러오기</button>`;
+      const retry = slot.querySelector("[data-manage-retry]");
+      retry.onclick = () => {
+        if (retry.disabled || !isManageLoaderCurrent(loader)) return;
+        retry.disabled = true;
+        state.thumbnailCache.delete(drawing.id);
+        slot.innerHTML = manageImageMarkup(drawing.id);
+        queueManageImage(loader, slot.querySelector("[data-manage-image]"), drawing);
+      };
+    }
+  });
+  runManageImageQueue(loader);
+}
+function observeManageImages(list, request) {
+  const loader = createManageLoader(request);
+  const images = [...document.querySelectorAll("[data-manage-image]")];
+  const queue = image => queueManageImage(loader, image, list.find(d => d.id === image.dataset.manageImage));
+  if ("IntersectionObserver" in window) {
+    const observer = new IntersectionObserver(entries => entries.forEach(entry => {
+      if (entry.isIntersecting && isManageLoaderCurrent(loader)) { observer.unobserve(entry.target); queue(entry.target); }
+    }), { rootMargin: "240px" });
+    state.manageObserver = observer;
+    images.forEach(image => observer.observe(image));
+  } else images.forEach(queue);
+  return loader;
+}
+async function loadManageDrawings() {
+  await expireOldDrawings();
+  const idsSnap = await db.ref(`userDrawings/${state.user.id}`).once("value");
+  const ids = Object.keys(safeObject(idsSnap.val()));
+  const drawings = await Promise.all(ids.map(async id => {
+    const snap = await db.ref(`drawings/${id}`).once("value");
+    return snap.exists() ? { ...(snap.val() || {}), id } : null;
+  }));
+  return drawings.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+}
+async function loadManageEditDrawing(drawing, button, request) {
+  const operationId = ++state.manageEditRequestId;
+  const originalText = button.textContent;
+  const originalDisabled = button.disabled;
+  button.disabled = true;
+  button.textContent = "불러오는 중…";
+  const ownsResult = () => state.route === "manage" && isScreenRequestCurrent(request) && state.manageEditRequestId === operationId && button.isConnected;
+  const canRestoreButton = () => state.route === "manage" && isScreenRequestCurrent(request) && button.isConnected;
+  try {
+    const imageData = await loadDrawingImage(drawing, "detail");
+    if (!ownsResult()) return;
+    state.editDrawing = { ...drawing, imageData };
+    state.word = { word: drawing.word, category: drawing.category, answers: drawing.answers || [drawing.word], isCustomWord: !!drawing.isCustomWord };
+    route("draw");
+  } catch (error) {
+    if (ownsResult()) showToast(userErrorMessage(error, "그림을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."));
+  } finally {
+    if (canRestoreButton()) { button.disabled = originalDisabled; button.textContent = originalText; }
+  }
+}
+function updateManageDrawingAfterWithdraw(drawingId, now = serverNow()) {
+  const drawing = state.manageDrawings?.find(item => item.id === drawingId);
+  if (!drawing) return false;
+  Object.assign(drawing, { status: "withdrawn", withdrawnAt: now, updatedAt: now });
+  return true;
+}
 async function renderManage() {
   const request = beginScreenRequest("manage");
   if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
-  loading(request);
+  cancelManageImageLoading();
+  if (!state.manageDrawings) loading(request);
   try {
-    await expireOldDrawings();
-    const idsSnap = await db.ref(`userDrawings/${state.user.id}`).once("value");
-    const ids = Object.keys(safeObject(idsSnap.val()));
-    const all = await Promise.all(ids.map(async id => {
-      const snap = await db.ref(`drawings/${id}`).once("value");
-      return snap.exists() ? { ...(snap.val() || {}), id } : null;
-    }));
-    const list = all.filter(d => d && d.status === state.manageStatus).sort((a, b) => b.createdAt - a.createdAt);
-    await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
+    if (!state.manageDrawings) {
+      const drawings = await loadManageDrawings();
+      if (!isScreenRequestCurrent(request)) return;
+      state.manageDrawings = drawings;
+    }
+    const list = state.manageDrawings.filter(d => d.status === state.manageStatus);
     if (!isScreenRequestCurrent(request)) return;
     appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><button id="newDrawingFromManage" class="button primary manage-new-drawing">✏️ 새 그림 그리기</button><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
     document.querySelector("#newDrawingFromManage").onclick = event => {
@@ -1729,28 +1840,31 @@ async function renderManage() {
       event.currentTarget.disabled = true;
       startNewDrawing();
     };
-    document.querySelectorAll("[data-status]").forEach(button => button.onclick = () => { state.manageStatus = button.dataset.status; renderManage(); });
+    document.querySelectorAll("[data-status]").forEach(button => button.onclick = () => {
+      state.manageStatus = button.dataset.status;
+      renderManage();
+    });
     document.querySelectorAll("[data-edit]").forEach(button => button.onclick = () => {
-      const d = list.find(x => x.id === button.dataset.edit);
-      state.editDrawing = d;
-      state.word = { word: d.word, category: d.category, answers: d.answers || [d.word], isCustomWord: !!d.isCustomWord };
-      route("draw");
+      const drawing = list.find(item => item.id === button.dataset.edit);
+      if (drawing) loadManageEditDrawing(drawing, button, request);
     });
     document.querySelectorAll("[data-withdraw]").forEach(button => button.onclick = () => confirmModal("정말 이 그림을 회수할까요?", "회수한 그림은 복구할 수 없고,\n전시장에도 전시되지 않습니다.", async () => {
       await withdrawDrawing(button.dataset.withdraw);
       if (!isScreenRequestCurrent(request)) return;
+      updateManageDrawingAfterWithdraw(button.dataset.withdraw);
       showToast("그림을 회수했어요.");
       renderManage();
     }));
+    observeManageImages(list, request);
   } catch (error) {
     if (!isScreenRequestCurrent(request)) return;
     console.error(error);
+    appEl.innerHTML = `<section class="screen">${emptyHtml("", "그림을 불러오지 못했어요.")}</section>`;
   }
 }
 function manageCard(d) {
-  return `<article class="card drawing-card"><img src="${d.imageData}" alt="내 그림"><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">정답이 맞혀지면 그린 사람에게 30점!</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
+  return `<article class="card drawing-card" data-manage-card="${d.id}"><div class="solve-image-slot manage-image-slot" data-manage-slot="${d.id}">${manageImageMarkup(d.id)}</div><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">정답을 맞히면 그린 사람에게 30점!</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
 }
-
 async function submitFeedback(content, isAnonymous, isSecret) {
   content = content.trim();
   if (content.length <= 5) throw new Error("조금만 더 자세히 적어주세요.");

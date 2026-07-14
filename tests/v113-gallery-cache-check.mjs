@@ -140,6 +140,8 @@ for (const scenario of [
   const loads = [];
   const dependencies = {
     state,
+    beginScreenRequest: () => ({ routeName: "gallery", requestId: 1, transitionId: 1 }),
+    isScreenRequestCurrent: () => true,
     isConfigured: () => true,
     appEl: { innerHTML: "" },
     loading: () => {},

@@ -23,7 +23,7 @@ assert.match(app, /successCount >= 10 \? 0 : successCount >= 5 \? 5 : 10/, "solv
 assert.match(app, /claim\.type === "solver"[^\n]+now - 3600000/, "recent solver successes must use a rolling hour");
 assert.match(app, /const drawerReward = 30/, "drawer solve reward must be 30");
 assert.match(app, /function isOwnDrawing\(d\)/, "drawing ownership checks must be shared");
-assert.match(app, /name === "gallery" && state\.route !== "gallery"[\s\S]{0,120}state\.galleryView = "thumb"/, "gallery entry must reset to thumbnail view");
+assert.match(app, /if \(name === "gallery"\)[\s\S]{0,220}state\.galleryView = detail \? "frame" : "thumb"/, "gallery entry must reset to thumbnails while preserving history detail state");
 assert.match(styles, /\.gallery-screen \.frame-image[^}]+height:\s*min\(42dvh, 420px\)/, "gallery frame image must fit mobile height");
 assert.match(app, /function showAnswerSuccessModal\(result\)/, "answer success modal must exist");
 assert.match(app, /정답입니다 🎉/, "answer success modal must show its title");

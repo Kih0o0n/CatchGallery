@@ -269,8 +269,7 @@ const state = {
   likeCache: new Map(),
   pendingLikes: new Set(),
   galleryObserver: null,
-  galleryLoadQueue: [],
-  galleryActiveLoads: 0,
+  galleryLoader: null,
   migrationCursor: null,
   migrationRunning: false,
   manageStatus: "open",
@@ -283,11 +282,16 @@ const state = {
   dirty: false,
   history: [],
   publishing: false,
+  saveOperationId: 0,
+  activeSaveOperationId: null,
+  editImageRequestId: 0,
   drawingPublished: false,
   feedbackView: "all",
   feedbackSort: "new",
   editingFeedback: null
 };
+let routeTransitionId = 0;
+const screenRequestIds = Object.create(null);
 let db = null;
 let auth = null;
 let serverTimeOffset = 0;
@@ -332,7 +336,16 @@ function userErrorMessage(error, fallback = "잠시 후 다시 시도해 주세�
   if (/permission[-_ ]?denied|FirebaseError|transaction/i.test(`${code} ${message}`)) return fallback;
   return message || fallback;
 }
-function loading() { appEl.innerHTML = '<div class="loading" aria-label="불러오는 중"></div>'; }
+function isTransitionCurrent(id, routeName = state.route) { return id === routeTransitionId && state.route === routeName; }
+function beginScreenRequest(routeName, transitionId = routeTransitionId) {
+  const requestId = (screenRequestIds[routeName] || 0) + 1;
+  screenRequestIds[routeName] = requestId;
+  return { routeName, transitionId, requestId };
+}
+function isScreenRequestCurrent(request) {
+  return isTransitionCurrent(request.transitionId, request.routeName) && screenRequestIds[request.routeName] === request.requestId;
+}
+function loading(request = null) { if (!request || isScreenRequestCurrent(request)) appEl.innerHTML = '<div class="loading" aria-label="불러오는 중"></div>'; }
 function formatTime(expiresAt) {
   const ms = Number(expiresAt) - serverNow();
   if (ms <= 0) return "마감됨";
@@ -462,31 +475,51 @@ function isConfigured() {
   showToast("Firebase 설정을 먼저 연결해 주세요.");
   return false;
 }
-function route(name, options = {}) {
-  if (name === "gallery" && state.route !== "gallery") {
-    state.galleryView = "thumb";
-    state.galleryIndex = 0;
+function cleanupScreenResources() {
+  state.galleryObserver?.disconnect();
+  state.galleryObserver = null;
+  if (state.galleryLoader) {
+    state.galleryLoader.cancelled = true;
+    state.galleryLoader.queue.length = 0;
+    state.galleryLoader = null;
   }
-  if (name === "draw" && state.route !== "draw") {
+  state.editImageRequestId++;
+  state.canvas = null;
+  state.ctx = null;
+  state.history = [];
+  state.drawing = false;
+  state.activePointerId = null;
+  state.dirty = false;
+  state.activeSaveOperationId = null;
+  state.publishing = false;
+  unlockDrawingScroll();
+}
+function transitionRoute(name, { historyMode = "push", historyState = null, renderOptions = {} } = {}) {
+  const previousRoute = state.route;
+  cleanupScreenResources();
+  routeTransitionId++;
+  if (name === "gallery") {
+    const detail = historyState?.galleryDetail === true;
+    state.galleryView = detail ? "frame" : "thumb";
+    if (detail && Number.isInteger(historyState?.galleryIndex)) state.galleryIndex = historyState.galleryIndex;
+    else if (previousRoute !== "gallery") state.galleryIndex = 0;
+  }
+  if (name === "draw" && previousRoute !== "draw") {
     state.seenWordKeys.clear();
     if (!state.editDrawing) state.word = null;
   }
   state.route = name;
   if (name !== "draw") state.editDrawing = null;
-  history.pushState({ route: name, galleryDetail: false }, "", `#${name}`);
-  renderRoute(options);
+  const nextHistoryState = historyState || { route: name, galleryDetail: false };
+  if (historyMode === "push") history.pushState(nextHistoryState, "", `#${name}`);
+  else if (historyMode === "replace") history.replaceState(nextHistoryState, "", `#${name}`);
+  renderRoute(renderOptions, routeTransitionId);
 }
+function route(name, options = {}) { transitionRoute(name, { renderOptions: options }); }
 
 window.addEventListener("popstate", event => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
-  if (name === "draw" && state.route !== "draw") {
-    state.seenWordKeys.clear();
-    if (!state.editDrawing) state.word = null;
-  }
-  if (name === "gallery") state.galleryView = event.state?.galleryDetail ? "frame" : "thumb";
-  if (name === "gallery" && state.route !== "gallery") state.galleryIndex = 0;
-  state.route = name;
-  renderRoute();
+  transitionRoute(name, { historyMode: "pop", historyState: event.state || { route: name, galleryDetail: false } });
 });
 document.addEventListener("click", e => {
   const target = e.target.closest("[data-route]");
@@ -607,9 +640,7 @@ async function boot() {
     }
     state.authReady = true;
     const initial = state.user ? (location.hash.slice(1) || "home") : "login";
-    state.route = initial;
-    history.replaceState({ route: initial }, "", `#${initial}`);
-    renderRoute();
+    transitionRoute(initial, { historyMode: "replace", historyState: { route: initial, galleryDetail: false } });
     if (state.user) expireOldDrawings().catch(console.error);
   });
 }
@@ -638,7 +669,7 @@ function solverRewardHtml(successCount, hintUsed = false) {
   if (successCount >= 5) return `<b>지금 맞히면 +${reward}점!</b><small>최근 1시간 동안 정답을 여러 개 맞혀 보상이 조금 줄었어요. 계속 맞힐 수 있어요!</small>`;
   return `<b>지금 맞히면 +${reward}점!</b>${hintUsed ? "<small>카테고리 힌트 사용으로 4점이 줄었어요.</small>" : ""}`;
 }
-async function loadCurrentUser(userId = auth?.currentUser?.uid) {
+async function loadCurrentUser(userId = auth?.currentUser?.uid, shouldApply = () => true) {
   if (!db || !userId) return null;
   const [snap, adminSnap, score] = await Promise.all([
     db.ref(`users/${userId}`).once("value"),
@@ -646,6 +677,7 @@ async function loadCurrentUser(userId = auth?.currentUser?.uid) {
     loadUserScore(userId)
   ]);
   if (!snap.exists()) return null;
+  if (!shouldApply()) return null;
   state.user = { id: userId, ...snap.val(), score };
   state.isAdmin = adminSnap.val() === true;
   localStorage.setItem("catchGalleryUid", userId);
@@ -654,7 +686,7 @@ async function loadCurrentUser(userId = auth?.currentUser?.uid) {
   return state.user;
 }
 
-function renderRoute() {
+function renderRoute(_options = {}, _transitionId = routeTransitionId) {
   const publicRoute = state.route === "login";
   headerEl.classList.toggle("hidden", publicRoute);
   if (!publicRoute && !state.user) {
@@ -801,30 +833,49 @@ async function saveDrawingDraft(edit, saveButton) {
     showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
     return "invalid";
   }
+  const operationId = ++state.saveOperationId;
+  const transitionId = routeTransitionId;
+  const canvas = state.canvas;
+  const ownsOperation = () => state.activeSaveOperationId === operationId && isTransitionCurrent(transitionId, "draw") && state.canvas === canvas;
+  state.activeSaveOperationId = operationId;
   state.publishing = true;
   saveButton.disabled = true;
   saveButton.textContent = "저장하는 중…";
   let published = false;
   try {
     if (edit) {
-      await updateDrawing(edit.id);
+      const savedImages = await updateDrawing(edit.id);
+      if (!ownsOperation()) return "cancelled";
+      if (savedImages) {
+        state.detailImageCache.set(edit.id, savedImages.imageData);
+        state.thumbnailCache.set(edit.id, savedImages.thumbnailData);
+      }
       state.editDrawing = null;
       state.word = null;
       showToast("수정했어요!");
       route("manage");
     } else {
-      await publishDrawing();
+      const savedDrawing = await publishDrawing();
+      if (!ownsOperation()) return "cancelled";
+      if (savedDrawing) {
+        state.detailImageCache.set(savedDrawing.id, savedDrawing.imageData);
+        state.thumbnailCache.set(savedDrawing.id, savedDrawing.thumbnailData);
+      }
       state.drawingPublished = true;
       published = true;
     }
   } catch (error) {
     console.error("그림 저장 실패:", error?.code || "unknown", error);
+    if (!ownsOperation()) return "cancelled";
     showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
     saveButton.disabled = false;
     saveButton.textContent = edit ? "수정 저장하기" : "게시하기";
     return "failed";
   } finally {
-    state.publishing = false;
+    if (ownsOperation()) {
+      state.publishing = false;
+      state.activeSaveOperationId = null;
+    }
   }
   if (published) {
     showDrawingPublishedModal();
@@ -949,8 +1000,16 @@ function setupCanvas(imageData) {
   state.canvas.addEventListener("lostpointercapture", lost);
 
   if (imageData) {
+    const editImageRequestId = ++state.editImageRequestId;
+    const transitionId = routeTransitionId;
+    const canvas = state.canvas;
+    const context = state.ctx;
     const img = new Image();
-    img.onload = () => { state.ctx.drawImage(img, 0, 0, 720, 720); };
+    img.onload = () => {
+      if (editImageRequestId !== state.editImageRequestId || !isTransitionCurrent(transitionId, "draw")) return;
+      if (state.canvas !== canvas || state.ctx !== context || !canvas.isConnected) return;
+      context.drawImage(img, 0, 0, 720, 720);
+    };
     img.src = imageData;
   }
 }
@@ -1020,8 +1079,7 @@ async function publishDrawing() {
     } catch (cleanupError) { console.error("불완전한 그림 정리 실패:", cleanupError); }
     throw error;
   }
-  state.detailImageCache.set(id, optimized.imageData);
-  state.thumbnailCache.set(id, optimized.thumbnailData);
+  return { id, imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
 }
 async function expireOldDrawings() {
   if (!db) return;
@@ -1058,12 +1116,14 @@ async function loadOpenDrawings(sort = "new") {
   return list.sort((a, b) => sort === "new" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
 }
 async function renderSolve() {
-  if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
-  loading();
+  const request = beginScreenRequest("solve");
+  if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
+  loading(request);
   const sort = sessionStorage.getItem("solveSort") || "new";
   try {
     const [list, recentSuccesses] = await Promise.all([loadOpenDrawings(sort), loadRecentSolverSuccessCount()]);
     await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
+    if (!isScreenRequestCurrent(request)) return;
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
@@ -1084,8 +1144,10 @@ async function renderSolve() {
       button.textContent = "확인 중…";
       try {
         const result = await submitAnswer(id, input.value, !!state.hintUsed[id]);
+        if (!isScreenRequestCurrent(request)) return;
         if (result.correct) {
-          await loadCurrentUser();
+          await loadCurrentUser(undefined, () => isScreenRequestCurrent(request));
+          if (!isScreenRequestCurrent(request)) return;
           renderSolve();
           showAnswerSuccessModal(result);
         } else {
@@ -1105,6 +1167,7 @@ async function renderSolve() {
       }
     });
   } catch (error) {
+    if (!isScreenRequestCurrent(request)) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "그림을 불러오지 못했어요.")}</section>`;
   }
@@ -1133,8 +1196,7 @@ async function updateDrawing(drawingId) {
     return { ...metadata, imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true, updatedAt: now, revisionCount: (Number(d.revisionCount) || 0) + 1 };
   }, null, false);
   if (!result.committed) throw new Error(reason);
-  state.detailImageCache.set(drawingId, optimized.imageData);
-  state.thumbnailCache.set(drawingId, optimized.thumbnailData);
+  return { imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
 }
 async function withdrawDrawing(drawingId) {
   const now = serverNow();
@@ -1170,13 +1232,15 @@ async function loadGalleryDrawings(status = state.galleryTab, sort = state.galle
 }
 function galleryListKey() { return `${state.galleryTab}:${state.gallerySort}`; }
 async function renderGallery(force = false) {
-  if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
+  const request = beginScreenRequest("gallery");
+  if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   const key = galleryListKey();
   if (force) delete state.galleryLists[key];
   const cacheHit = !!state.galleryLists[key];
-  if (!state.galleryLists[key]) loading();
+  if (!state.galleryLists[key]) loading(request);
   try {
     const list = state.galleryLists[key] || await loadGalleryDrawings();
+    if (!isScreenRequestCurrent(request)) return;
     state.galleryLists[key] = list;
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
     const renderedAt = performance.now();
@@ -1226,43 +1290,69 @@ function bindGalleryShell() {
   document.querySelector("[data-open-migration]")?.addEventListener("click", openMigrationPanel);
 }
 function bindGalleryContent(list) {
+  const request = { routeName: "gallery", transitionId: routeTransitionId, requestId: screenRequestIds.gallery };
   document.querySelector("[data-prev]")?.addEventListener("click", () => { state.galleryIndex--; renderGalleryContent(list); });
   document.querySelector("[data-next]")?.addEventListener("click", () => { state.galleryIndex++; renderGalleryContent(list); });
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
   document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => {
     state.galleryScroll[galleryListKey()] = scrollY; state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame";
-    history.pushState({ route: "gallery", galleryDetail: true }, "", "#gallery"); renderGalleryContent(list);
+    history.pushState({ route: "gallery", galleryDetail: true, galleryIndex: state.galleryIndex }, "", "#gallery"); renderGalleryContent(list);
   });
   document.querySelectorAll("[data-like]").forEach(button => button.onclick = async event => {
     event.stopPropagation();
     const id = button.dataset.like;
     if (button.disabled || state.pendingLikes.has(id)) return;
     state.pendingLikes.add(id); button.disabled = true;
-    try { await ensureLikeState(id); await toggleLike(id, list.find(d => d.id === id)); syncGalleryLike(id); }
-    catch (error) { showToast(userErrorMessage(error)); }
+    try {
+      await ensureLikeState(id); await toggleLike(id, list.find(d => d.id === id));
+      if (!isScreenRequestCurrent(request)) return;
+      syncGalleryLike(id);
+    }
+    catch (error) { if (isScreenRequestCurrent(request)) showToast(userErrorMessage(error)); }
     finally {
       state.pendingLikes.delete(id);
+      if (!isScreenRequestCurrent(request)) return;
       const own = list.find(d => d.id === id)?.drawerId === state.user.id;
       document.querySelectorAll(`[data-like="${id}"]`).forEach(item => { item.disabled = own; });
     }
   });
   document.querySelectorAll("[data-admin-delete]").forEach(button => button.onclick = () => confirmModal("관리자 삭제", "관리자 권한으로 이 그림을 전시장에서 숨길까요?", async () => {
-    await adminDeleteDrawing(button.dataset.adminDelete); delete state.galleryLists[galleryListKey()]; showToast("그림을 전시장에서 숨겼어요."); renderGallery();
+    await adminDeleteDrawing(button.dataset.adminDelete);
+    if (!isScreenRequestCurrent(request)) return;
+    delete state.galleryLists[galleryListKey()]; showToast("그림을 전시장에서 숨겼어요."); renderGallery();
   }));
   if (state.galleryView === "thumb") observeGalleryThumbnails(list); else loadGalleryDetail(list[state.galleryIndex], list);
 }
-function enqueueGalleryLoad(task) {
-  state.galleryLoadQueue.push(task);
-  runGalleryLoadQueue();
+function createGalleryLoader() {
+  if (state.galleryLoader) {
+    state.galleryLoader.cancelled = true;
+    state.galleryLoader.queue.length = 0;
+  }
+  const loader = { queue: [], active: 0, cancelled: false, transitionId: routeTransitionId };
+  state.galleryLoader = loader;
+  return loader;
 }
-function runGalleryLoadQueue() {
-  while (state.galleryActiveLoads < IMAGE_OPTIONS.maxConcurrentLoads && state.galleryLoadQueue.length) {
-    state.galleryActiveLoads++;
-    Promise.resolve(state.galleryLoadQueue.shift()()).finally(() => { state.galleryActiveLoads--; runGalleryLoadQueue(); });
+function isGalleryLoaderCurrent(loader) {
+  return !loader.cancelled && state.galleryLoader === loader && isTransitionCurrent(loader.transitionId, "gallery");
+}
+function enqueueGalleryLoad(loader, task) {
+  if (loader.cancelled) return;
+  loader.queue.push(task);
+  runGalleryLoadQueue(loader);
+}
+function runGalleryLoadQueue(loader) {
+  while (!loader.cancelled && loader.active < IMAGE_OPTIONS.maxConcurrentLoads && loader.queue.length) {
+    loader.active++;
+    const task = loader.queue.shift();
+    Promise.resolve(task()).finally(() => {
+      loader.active--;
+      if (!loader.cancelled) runGalleryLoadQueue(loader);
+    });
   }
 }
 function observeGalleryThumbnails(list) {
   state.galleryObserver?.disconnect();
+  const loader = createGalleryLoader();
   const started = performance.now();
   const images = [...document.querySelectorAll("[data-thumbnail-image]")];
   const initiallyVisible = new Set(images.filter(image => image.getBoundingClientRect().top < innerHeight + 40));
@@ -1271,11 +1361,11 @@ function observeGalleryThumbnails(list) {
     if (image.dataset.queued) return;
     image.dataset.queued = "true";
     const drawing = list.find(item => item.id === image.dataset.thumbnailImage);
-    enqueueGalleryLoad(async () => {
+    enqueueGalleryLoad(loader, async () => {
       const first = !state.thumbnailCache.size;
       try {
         const [src] = await Promise.all([loadDrawingImage(drawing, "thumbnail"), ensureLikeState(drawing.id)]);
-        if (!image.isConnected) return;
+        if (!isGalleryLoaderCurrent(loader) || !image.isConnected) return;
         image.src = src; image.classList.add("loaded");
         image.parentElement.querySelector(".image-loading")?.remove();
         syncGalleryLike(drawing.id);
@@ -1283,13 +1373,15 @@ function observeGalleryThumbnails(list) {
         initiallyVisible.delete(image);
         if (!initiallyVisible.size && !visibleLogged) { visibleLogged = true; console.info(`[gallery] visible thumbnails complete ${Math.round(performance.now() - started)}ms`); }
       } catch (_) {
-        if (image.isConnected) image.parentElement.innerHTML = `<button class="image-retry" data-image-retry="${drawing.id}">다시 불러오기</button>`;
+        if (!isGalleryLoaderCurrent(loader) || !image.isConnected) return;
+        image.parentElement.innerHTML = `<button class="image-retry" data-image-retry="${drawing.id}">다시 불러오기</button>`;
         document.querySelector(`[data-image-retry="${drawing.id}"]`)?.addEventListener("click", () => { state.thumbnailCache.delete(drawing.id); renderGalleryContent(list); });
       }
     });
   };
   if ("IntersectionObserver" in window) {
-    state.galleryObserver = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) { state.galleryObserver.unobserve(entry.target); load(entry.target); } }), { rootMargin: "240px" });
+    const observer = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting && isGalleryLoaderCurrent(loader)) { observer.unobserve(entry.target); load(entry.target); } }), { rootMargin: "240px" });
+    state.galleryObserver = observer;
     images.forEach(image => state.galleryObserver.observe(image));
   } else images.forEach(load);
 }
@@ -1318,9 +1410,11 @@ function syncGalleryLike(id) {
 }
 async function loadGalleryDetail(drawing, list) {
   if (!drawing) return;
+  const loader = createGalleryLoader();
   const started = performance.now();
   try {
     const [src] = await Promise.all([loadDrawingImage(drawing), ensureLikeState(drawing.id)]);
+    if (!isGalleryLoaderCurrent(loader)) return;
     const image = document.querySelector(`[data-detail-image="${drawing.id}"]`);
     if (image) { image.src = src; image.classList.add("loaded"); image.parentElement.querySelector(".image-loading")?.remove(); }
     syncGalleryLike(drawing.id);
@@ -1328,6 +1422,7 @@ async function loadGalleryDetail(drawing, list) {
     const neighbor = list[state.galleryIndex + 1] || list[state.galleryIndex - 1];
     if (neighbor) loadDrawingImage(neighbor).catch(() => {});
   } catch (_) {
+    if (!isGalleryLoaderCurrent(loader)) return;
     const slot = document.querySelector(`[data-detail-image="${drawing.id}"]`)?.parentElement;
     if (slot) slot.innerHTML = `<button class="image-retry" data-detail-retry>이미지 다시 불러오기</button>`;
     slot?.querySelector("[data-detail-retry]")?.addEventListener("click", () => { state.detailImageCache.delete(drawing.id); renderGalleryContent(list); });
@@ -1463,18 +1558,22 @@ async function loadRanking(type = state.rankingType) {
   return list.sort((a, b) => (b.score || 0) - (a.score || 0) || a.createdAt - b.createdAt).slice(0, 30);
 }
 async function renderRanking() {
-  loading();
+  const request = beginScreenRequest("ranking");
+  loading(request);
   try {
     const list = await loadRanking();
+    if (!isScreenRequestCurrent(request)) return;
     const labels = { total: "종합 랭킹", drawer: "그리기 랭킹", solver: "맞히기 랭킹" };
     appEl.innerHTML = `<section class="screen"><h2>랭킹</h2><p class="muted">${labels[state.rankingType]} 상위 30명까지 보여드려요.</p><div class="tabs ranking-tabs"><button data-ranking="total" class="${state.rankingType === "total" ? "active" : ""}">종합</button><button data-ranking="drawer" class="${state.rankingType === "drawer" ? "active" : ""}">그리기</button><button data-ranking="solver" class="${state.rankingType === "solver" ? "active" : ""}">맞히기</button></div><div>${list.map((u, i) => `<div class="rank-row ${u.id === state.user.id ? "mine" : ""}"><div class="rank-num">${i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div><div><b>${escapeHtml(u.nickname)}</b>${u.id === state.user.id ? "<small> · 나</small>" : ""}</div><div class="rank-score">${Number(u.score) || 0}점</div></div>`).join("") || emptyHtml("", "아직 랭킹이 비어 있어요.")}</div><button id="deleteRanking" class="button danger full" style="margin-top:20px">내 랭킹 삭제</button></section>`;
     document.querySelectorAll("[data-ranking]").forEach(button => button.onclick = () => { state.rankingType = button.dataset.ranking; renderRanking(); });
     document.querySelector("#deleteRanking").onclick = () => confirmModal("정말 내 랭킹을 삭제할까요?", "내 점수와 랭킹 기록이 사라집니다.\n하지만 이미 전시장에 올라간 그림은 삭제되지 않습니다.", async () => {
       await deleteMyRanking();
+      if (!isScreenRequestCurrent(request)) return;
       showToast("랭킹을 삭제했어요.\n다음 로그인부터 0점으로 다시 참여해요.");
       await signOut();
     });
   } catch (error) {
+    if (!isScreenRequestCurrent(request)) return;
     console.error(error);
   }
 }
@@ -1489,8 +1588,9 @@ async function deleteMyRanking() {
   });
 }
 async function renderManage() {
-  if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
-  loading();
+  const request = beginScreenRequest("manage");
+  if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
+  loading(request);
   try {
     await expireOldDrawings();
     const idsSnap = await db.ref(`userDrawings/${state.user.id}`).once("value");
@@ -1501,6 +1601,7 @@ async function renderManage() {
     }));
     const list = all.filter(d => d && d.status === state.manageStatus).sort((a, b) => b.createdAt - a.createdAt);
     await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
+    if (!isScreenRequestCurrent(request)) return;
     appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><button id="newDrawingFromManage" class="button primary manage-new-drawing">✏️ 새 그림 그리기</button><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
     document.querySelector("#newDrawingFromManage").onclick = event => {
       if (event.currentTarget.disabled) return;
@@ -1516,10 +1617,12 @@ async function renderManage() {
     });
     document.querySelectorAll("[data-withdraw]").forEach(button => button.onclick = () => confirmModal("정말 이 그림을 회수할까요?", "회수한 그림은 복구할 수 없고,\n전시장에도 전시되지 않습니다.", async () => {
       await withdrawDrawing(button.dataset.withdraw);
+      if (!isScreenRequestCurrent(request)) return;
       showToast("그림을 회수했어요.");
       renderManage();
     }));
   } catch (error) {
+    if (!isScreenRequestCurrent(request)) return;
     console.error(error);
   }
 }
@@ -1602,13 +1705,16 @@ async function toggleFeedbackHidden(id, hidden) {
   await db.ref(`feedbackMeta/${id}`).update({ hidden, updatedAt: serverNow() });
 }
 async function renderFeedback() {
-  loading();
+  const request = beginScreenRequest("feedback");
+  loading(request);
   try {
     const list = await loadFeedback();
+    if (!isScreenRequestCurrent(request)) return;
     const editing = state.editingFeedback;
     appEl.innerHTML = `<section class="screen"><h2>의견 보내기</h2><p class="muted">게임에 바라는 점이나 불편한 점을 남겨주세요.</p><form id="feedbackForm" class="card feedback-form"><textarea id="feedbackText" maxlength="300" placeholder="의견을 적어주세요" required>${editing ? escapeHtml(editing.content) : ""}</textarea>${editing ? "" : `<label class="check-row"><input id="anonymousCheck" type="checkbox"> 익명으로 올리기</label><label class="check-row"><input id="secretCheck" type="checkbox"> 비밀글로 올리기</label>`}<div class="button-row">${editing ? '<button id="cancelFeedbackEdit" class="button ghost" type="button">취소</button>' : ""}<button class="button primary" type="submit">${editing ? "수정 저장" : "보내기"}</button></div></form><div class="feedback-view-tabs"><button data-feedback-view="all" class="${state.feedbackView === "all" ? "active" : ""}">전체 글</button><button data-feedback-view="mine" class="${state.feedbackView === "mine" ? "active" : ""}">내 글</button></div><div class="feedback-sorts">${FEEDBACK_SORTS.map(([key, label]) => `<button data-feedback-sort="${key}" class="${state.feedbackSort === key ? "active" : ""}">${label}</button>`).join("")}</div><div>${list.length ? list.map(feedbackCard).join("") : emptyHtml("", "아직 의견이 없어요.")}</div></section>`;
-    bindFeedback(list);
+    bindFeedback(list, request);
   } catch (error) {
+    if (!isScreenRequestCurrent(request)) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "의견을 불러오지 못했어요.")}</section>`;
   }
@@ -1619,7 +1725,7 @@ function feedbackCard(f) {
   const reply = f.content?.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : "";
   return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reply}<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${f.id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👍 ${Number(f.likeCount) || 0}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${f.id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👎 ${Number(f.dislikeCount) || 0}</button></div>${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}">수정</button><button class="button danger" data-delete-feedback="${f.id}">삭제</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" placeholder="운영자 답변">${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}">${f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}">${f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
 }
-function bindFeedback(list) {
+function bindFeedback(list, request = beginScreenRequest("feedback")) {
   const form = document.querySelector("#feedbackForm");
   form.onsubmit = async event => {
     event.preventDefault();
@@ -1632,10 +1738,12 @@ function bindFeedback(list) {
     try {
       if (state.editingFeedback) await updateFeedback(state.editingFeedback.id, content);
       else await submitFeedback(content, document.querySelector("#anonymousCheck").checked, document.querySelector("#secretCheck").checked);
+      if (!isScreenRequestCurrent(request)) return;
       state.editingFeedback = null;
       showToast("의견을 저장했어요.");
       renderFeedback();
     } catch (error) {
+      if (!isScreenRequestCurrent(request)) return;
       showToast(userErrorMessage(error, "의견을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
       button.disabled = false;
       button.textContent = originalText;
@@ -1644,11 +1752,11 @@ function bindFeedback(list) {
   document.querySelector("#cancelFeedbackEdit")?.addEventListener("click", () => { state.editingFeedback = null; renderFeedback(); });
   document.querySelectorAll("[data-feedback-view]").forEach(button => button.onclick = () => { state.feedbackView = button.dataset.feedbackView; state.editingFeedback = null; renderFeedback(); });
   document.querySelectorAll("[data-feedback-sort]").forEach(button => button.onclick = () => { state.feedbackSort = button.dataset.feedbackSort; renderFeedback(); });
-  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackReaction(button.dataset.id, button.dataset.react); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
+  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackReaction(button.dataset.id, button.dataset.react); if (isScreenRequestCurrent(request)) renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
   document.querySelectorAll("[data-edit-feedback]").forEach(button => button.onclick = () => { const feedback = list.find(item => item.id === button.dataset.editFeedback); state.editingFeedback = { id: feedback.id, content: feedback.content?.content || "" }; renderFeedback(); });
-  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => { await deleteFeedback(button.dataset.deleteFeedback); showToast("의견을 삭제했어요."); renderFeedback(); }));
-  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "저장 중…"; try { await saveAdminReply(button.dataset.adminReply, document.querySelector(`[data-reply-text="${button.dataset.adminReply}"]`).value); showToast("답변을 저장했어요."); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
-  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackHidden(button.dataset.adminHide, button.dataset.hidden !== "true"); renderFeedback(); } catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
+  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => { await deleteFeedback(button.dataset.deleteFeedback); if (!isScreenRequestCurrent(request)) return; showToast("의견을 삭제했어요."); renderFeedback(); }));
+  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "저장 중…"; try { await saveAdminReply(button.dataset.adminReply, document.querySelector(`[data-reply-text="${button.dataset.adminReply}"]`).value); if (!isScreenRequestCurrent(request)) return; showToast("답변을 저장했어요."); renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
+  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackHidden(button.dataset.adminHide, button.dataset.hidden !== "true"); if (isScreenRequestCurrent(request)) renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
 }
 
 function renderGuide() {

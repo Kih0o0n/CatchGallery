@@ -240,6 +240,7 @@ const WORDS = Object.entries({
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
 const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
+const DRAWING_HISTORY_LIMIT = 15;
 const DRAWING_COLORS = [
   ["#3e3a48", "검정색"], ["#ed5f72", "빨간색"], ["#f29b38", "주황색"], ["#f0cf3a", "노란색"],
   ["#57b879", "초록색"], ["#45a8df", "파란색"], ["#745bc7", "보라색"], ["#f08fbd", "분홍색"],
@@ -287,6 +288,12 @@ const state = {
   activePointerId: null,
   dirty: false,
   history: [],
+  historyBaseCanvas: null,
+  historyBaseContext: null,
+  historyBaseReady: false,
+  activeStroke: null,
+  canvasRect: null,
+  brushInput: null,
   publishing: false,
   saveOperationId: 0,
   activeSaveOperationId: null,
@@ -379,12 +386,10 @@ function resetDrawingDraft({ preserveSeenWords = false } = {}) {
   }
   state.word = null;
   state.editDrawing = null;
+  releaseCanvasHistory();
   state.canvas = null;
   state.ctx = null;
-  state.drawing = false;
-  state.activePointerId = null;
   state.dirty = false;
-  state.history = [];
   state.publishing = false;
   state.drawingPublished = false;
 }
@@ -493,11 +498,9 @@ function cleanupScreenResources() {
     state.galleryLoader = null;
   }
   state.editImageRequestId++;
+  releaseCanvasHistory();
   state.canvas = null;
   state.ctx = null;
-  state.history = [];
-  state.drawing = false;
-  state.activePointerId = null;
   state.dirty = false;
   state.activeSaveOperationId = null;
   state.publishing = false;
@@ -942,100 +945,183 @@ function bindDocumentDrawingScrollBlocker() {
   document.addEventListener("gesturestart", block, { passive: false, capture: true });
   window.__catchGalleryDrawingScrollBlockerBound = true;
 }
+function releaseCanvasHistory() {
+  if (state.historyBaseCanvas) {
+    state.historyBaseCanvas.width = 0;
+    state.historyBaseCanvas.height = 0;
+  }
+  state.history = [];
+  state.historyBaseCanvas = null;
+  state.historyBaseContext = null;
+  state.historyBaseReady = false;
+  state.activeStroke = null;
+  state.canvasRect = null;
+  state.brushInput = null;
+  state.drawing = false;
+  state.activePointerId = null;
+}
+function initializeCanvasHistory(canvas, baseReady = true) {
+  releaseCanvasHistory();
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = canvas.width;
+  baseCanvas.height = canvas.height;
+  state.historyBaseCanvas = baseCanvas;
+  state.historyBaseContext = baseCanvas.getContext("2d");
+  state.historyBaseReady = baseReady;
+}
+function applyCanvasAction(context, action) {
+  if (!context || !action) return;
+  if (action.type === "clear") {
+    context.globalCompositeOperation = "source-over";
+    context.clearRect(0, 0, 720, 720);
+    return;
+  }
+  if (action.type !== "stroke" || !Array.isArray(action.points) || action.points.length < 2) return;
+  context.globalCompositeOperation = action.compositeOperation;
+  context.strokeStyle = action.color;
+  context.lineWidth = action.width;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(action.points[0].x, action.points[0].y);
+  for (const point of action.points.slice(1)) context.lineTo(point.x, point.y);
+  context.stroke();
+  context.closePath();
+}
+function compactCanvasHistory() {
+  if (!state.historyBaseReady || !state.historyBaseContext) return;
+  while (state.history.length > DRAWING_HISTORY_LIMIT) applyCanvasAction(state.historyBaseContext, state.history.shift());
+}
+function commitCanvasAction(action) {
+  if (!action || (action.type === "stroke" && action.points.length < 2)) return false;
+  state.history.push(action);
+  compactCanvasHistory();
+  return true;
+}
+function redrawCanvasFromHistory() {
+  if (!state.ctx || !state.canvas) return;
+  const tool = {
+    compositeOperation: state.ctx.globalCompositeOperation,
+    color: state.ctx.strokeStyle,
+    width: state.ctx.lineWidth
+  };
+  state.ctx.globalCompositeOperation = "source-over";
+  state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+  if (state.historyBaseReady && state.historyBaseCanvas) state.ctx.drawImage(state.historyBaseCanvas, 0, 0);
+  state.history.forEach(action => applyCanvasAction(state.ctx, action));
+  state.ctx.globalCompositeOperation = tool.compositeOperation;
+  state.ctx.strokeStyle = tool.color;
+  state.ctx.lineWidth = tool.width;
+  state.ctx.lineCap = "round";
+  state.ctx.lineJoin = "round";
+}
+function canvasPoint(event, rect, canvas = state.canvas) {
+  return {
+    x: (event.clientX - rect.left) * canvas.width / rect.width,
+    y: (event.clientY - rect.top) * canvas.height / rect.height
+  };
+}
 function setupCanvas(imageData) {
   bindDocumentDrawingScrollBlocker();
   state.canvas = document.querySelector("#drawingCanvas");
-  state.ctx = state.canvas.getContext("2d", { willReadFrequently: true });
+  state.ctx = state.canvas.getContext("2d");
   state.ctx.lineCap = "round";
   state.ctx.lineJoin = "round";
   state.ctx.globalCompositeOperation = "source-over";
   state.ctx.strokeStyle = "#3e3a48";
   state.ctx.lineWidth = 9;
-  state.history = [];
+  initializeCanvasHistory(state.canvas, !imageData);
+  state.brushInput = document.querySelector("#brushSize");
   state.dirty = false;
-  state.activePointerId = null;
 
-  const pos = event => {
-    const rect = state.canvas.getBoundingClientRect();
-    return [
-      (event.clientX - rect.left) * state.canvas.width / rect.width,
-      (event.clientY - rect.top) * state.canvas.height / rect.height
-    ];
-  };
   const start = event => {
     if (state.activePointerId !== null || event.isPrimary === false) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     preventIfCancelable(event);
     if (event.pointerType !== "mouse") lockDrawingScroll();
+    const rect = state.canvas.getBoundingClientRect();
+    const point = canvasPoint(event, rect);
     state.activePointerId = event.pointerId;
-    state.canvas.setPointerCapture?.(event.pointerId);
-    saveHistory();
+    state.canvasRect = rect;
+    state.activeStroke = {
+      type: "stroke",
+      compositeOperation: state.ctx.globalCompositeOperation,
+      color: state.ctx.strokeStyle || "#3e3a48",
+      width: Number(state.brushInput?.value || 9),
+      points: [point]
+    };
     state.drawing = true;
-    const [x, y] = pos(event);
+    state.ctx.globalCompositeOperation = state.activeStroke.compositeOperation;
+    state.ctx.strokeStyle = state.activeStroke.color;
+    state.ctx.lineWidth = state.activeStroke.width;
     state.ctx.beginPath();
-    state.ctx.moveTo(x, y);
+    state.ctx.moveTo(point.x, point.y);
+    state.canvas.setPointerCapture?.(event.pointerId);
   };
   const move = event => {
-    if (!state.drawing || event.pointerId !== state.activePointerId) return;
+    if (!state.drawing || event.pointerId !== state.activePointerId || !state.activeStroke || !state.canvasRect) return;
     preventIfCancelable(event);
-    const [x, y] = pos(event);
-    const brush = document.querySelector("#brushSize");
-    state.ctx.lineWidth = Number(brush?.value || 9);
-    state.ctx.lineTo(x, y);
+    const point = canvasPoint(event, state.canvasRect);
+    state.activeStroke.points.push(point);
+    state.ctx.globalCompositeOperation = state.activeStroke.compositeOperation;
+    state.ctx.strokeStyle = state.activeStroke.color;
+    state.ctx.lineWidth = state.activeStroke.width;
+    state.ctx.lineTo(point.x, point.y);
     state.ctx.stroke();
     state.dirty = true;
   };
-  const end = event => {
-    if (event.pointerId !== state.activePointerId) return;
+  const finish = (event, releaseCapture) => {
+    if (event.pointerId !== state.activePointerId || !state.activeStroke) return;
     if (state.drawing) preventIfCancelable(event);
-    if (state.canvas.hasPointerCapture?.(event.pointerId)) state.canvas.releasePointerCapture(event.pointerId);
+    const stroke = state.activeStroke;
+    const canvas = state.canvas;
     state.drawing = false;
     state.activePointerId = null;
+    state.activeStroke = null;
+    state.canvasRect = null;
     state.ctx.closePath();
+    commitCanvasAction(stroke);
     unlockDrawingScroll();
-  };
-  const lost = event => {
-    if (event.pointerId !== state.activePointerId) return;
-    state.drawing = false;
-    state.activePointerId = null;
-    state.ctx.closePath();
-    unlockDrawingScroll();
+    if (releaseCapture && canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   };
 
   state.canvas.addEventListener("pointerdown", start, { passive: false });
   state.canvas.addEventListener("pointermove", move, { passive: false });
-  state.canvas.addEventListener("pointerup", end, { passive: false });
-  state.canvas.addEventListener("pointercancel", end, { passive: false });
-  state.canvas.addEventListener("lostpointercapture", lost);
+  state.canvas.addEventListener("pointerup", event => finish(event, true), { passive: false });
+  state.canvas.addEventListener("pointercancel", event => finish(event, true), { passive: false });
+  state.canvas.addEventListener("lostpointercapture", event => finish(event, false));
 
   if (imageData) {
     const editImageRequestId = ++state.editImageRequestId;
     const transitionId = routeTransitionId;
     const canvas = state.canvas;
     const context = state.ctx;
-    const img = new Image();
-    img.onload = () => {
-      if (editImageRequestId !== state.editImageRequestId || !isTransitionCurrent(transitionId, "draw")) return;
-      if (state.canvas !== canvas || state.ctx !== context || !canvas.isConnected) return;
-      context.drawImage(img, 0, 0, 720, 720);
+    const baseCanvas = state.historyBaseCanvas;
+    const baseContext = state.historyBaseContext;
+    const ownsImage = () => editImageRequestId === state.editImageRequestId && isTransitionCurrent(transitionId, "draw") && state.canvas === canvas && state.ctx === context && state.historyBaseCanvas === baseCanvas && state.historyBaseContext === baseContext && canvas.isConnected;
+    const finishBase = image => {
+      if (!ownsImage()) return;
+      baseContext.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+      if (image) baseContext.drawImage(image, 0, 0, baseCanvas.width, baseCanvas.height);
+      state.historyBaseReady = true;
+      compactCanvasHistory();
+      redrawCanvasFromHistory();
     };
+    const img = new Image();
+    img.onload = () => finishBase(img);
+    img.onerror = () => { if (!ownsImage()) return; console.warn("수정 이미지를 불러오지 못했습니다."); finishBase(null); };
     img.src = imageData;
   }
 }
-function saveHistory() {
-  if (state.history.length >= 15) state.history.shift();
-  state.history.push(state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height));
-}
 function undoCanvas() {
-  const last = state.history.pop();
-  if (!last) return showToast("되돌릴 내용이 없어요.");
-  state.ctx.globalCompositeOperation = "source-over";
-  state.ctx.putImageData(last, 0, 0);
+  if (!state.history.length) return showToast("되돌릴 내용이 없어요.");
+  state.history.pop();
+  redrawCanvasFromHistory();
   state.dirty = true;
 }
 function clearCanvasBoard(track) {
-  if (track) saveHistory();
-  state.ctx.clearRect(0, 0, 720, 720);
+  if (track) commitCanvasAction({ type: "clear" });
+  state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
   state.dirty = !!track;
 }
 async function publishDrawing() {

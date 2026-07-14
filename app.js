@@ -1157,6 +1157,7 @@ async function renderSolve() {
           button.textContent = originalText;
         }
       } catch (error) {
+        if (!isScreenRequestCurrent(request)) return;
         console.error("정답 확인 중 오류:", error);
         const permissionError = /permission[-_ ]?denied/i.test(`${error?.code || ""} ${error?.message || ""}`);
         showToast(permissionError
@@ -1248,8 +1249,11 @@ async function renderGallery(force = false) {
     renderGalleryContent(list);
     bindGalleryShell();
     console.info(`[gallery] cards rendered ${Math.round(performance.now() - renderedAt)}ms · server reread=${!cacheHit}`);
-    if (state.galleryView === "thumb") requestAnimationFrame(() => scrollTo(0, state.galleryScroll[key] || 0));
+    if (state.galleryView === "thumb") requestAnimationFrame(() => {
+      if (isScreenRequestCurrent(request) && galleryListKey() === key) scrollTo(0, state.galleryScroll[key] || 0);
+    });
   } catch (error) {
+    if (!isScreenRequestCurrent(request)) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "전시장을 불러오지 못했어요.")}</section>`;
   }
@@ -1289,10 +1293,15 @@ function bindGalleryShell() {
   gallerySort.onchange = () => { state.galleryScroll[galleryListKey()] = 0; state.gallerySort = gallerySort.value; state.galleryIndex = 0; renderGallery(); };
   document.querySelector("[data-open-migration]")?.addEventListener("click", openMigrationPanel);
 }
+function moveGalleryIndex(delta, list) {
+  state.galleryIndex += delta;
+  history.replaceState({ ...(history.state || {}), route: "gallery", galleryDetail: true, galleryIndex: state.galleryIndex }, "", "#gallery");
+  renderGalleryContent(list);
+}
 function bindGalleryContent(list) {
   const request = { routeName: "gallery", transitionId: routeTransitionId, requestId: screenRequestIds.gallery };
-  document.querySelector("[data-prev]")?.addEventListener("click", () => { state.galleryIndex--; renderGalleryContent(list); });
-  document.querySelector("[data-next]")?.addEventListener("click", () => { state.galleryIndex++; renderGalleryContent(list); });
+  document.querySelector("[data-prev]")?.addEventListener("click", () => moveGalleryIndex(-1, list));
+  document.querySelector("[data-next]")?.addEventListener("click", () => moveGalleryIndex(1, list));
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
   document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => {
     state.galleryScroll[galleryListKey()] = scrollY; state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame";
@@ -1778,15 +1787,23 @@ function emptyHtml(icon, text) { return `<div class="empty"><div class="empty-ic
 function confirmModal(title, message, onConfirm) {
   const root = document.querySelector("#modalRoot");
   root.innerHTML = `<div class="modal-backdrop"><div class="modal"><h3>${title}</h3><p>${message}</p><div class="button-row"><button class="button ghost" data-cancel>취소</button><button class="button danger" data-confirm>확인</button></div></div></div>`;
-  root.querySelector("[data-cancel]").onclick = () => root.innerHTML = "";
+  const backdrop = root.firstElementChild;
+  const ownsModal = () => root.firstElementChild === backdrop && backdrop?.isConnected !== false;
+  root.querySelector("[data-cancel]").onclick = () => { if (ownsModal()) root.innerHTML = ""; };
   root.querySelector("[data-confirm]").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
     const original = button.textContent;
     button.disabled = true;
     button.textContent = "처리 중…";
-    try { await onConfirm(); root.innerHTML = ""; }
-    catch (error) { showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; }
+    try {
+      await onConfirm();
+      if (ownsModal()) root.innerHTML = "";
+    }
+    catch (error) {
+      if (!ownsModal() || !button.isConnected) return;
+      showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original;
+    }
   };
 }
 

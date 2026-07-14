@@ -240,6 +240,12 @@ const WORDS = Object.entries({
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
 const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
+const DRAWING_COLORS = [
+  ["#3e3a48", "검정색"], ["#ed5f72", "빨간색"], ["#f29b38", "주황색"], ["#f0cf3a", "노란색"],
+  ["#57b879", "초록색"], ["#45a8df", "파란색"], ["#745bc7", "보라색"], ["#f08fbd", "분홍색"],
+  ["#8b5a3c", "갈색"], ["#83d3f2", "하늘색"], ["#2f7d57", "진한 초록색"], ["#8b8f9c", "회색"],
+  ["#f2c6a0", "베이지색·살구색"], ["#304a8a", "남색"], ["#b69de8", "연보라색"]
+];
 
 const appEl = document.querySelector("#app");
 const headerEl = document.querySelector("#appHeader");
@@ -277,6 +283,7 @@ const state = {
   dirty: false,
   history: [],
   publishing: false,
+  drawingPublished: false,
   feedbackView: "all",
   feedbackSort: "new",
   editingFeedback: null
@@ -344,6 +351,39 @@ function randomWord() {
   const next = available[Math.floor(Math.random() * available.length)];
   state.seenWordKeys.add(wordKey(next));
   state.word = { ...next, answers: [...next.answers], isCustomWord: false };
+}
+function resetDrawingDraft({ preserveSeenWords = false } = {}) {
+  if (!preserveSeenWords) state.seenWordKeys.clear();
+  if (state.ctx && state.canvas) {
+    state.ctx.globalCompositeOperation = "source-over";
+    state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+  }
+  state.word = null;
+  state.editDrawing = null;
+  state.canvas = null;
+  state.ctx = null;
+  state.drawing = false;
+  state.activePointerId = null;
+  state.dirty = false;
+  state.history = [];
+  state.publishing = false;
+  state.drawingPublished = false;
+}
+function startNewDrawing({ preserveSeenWords = false } = {}) {
+  const previousWord = preserveSeenWords ? state.word : null;
+  resetDrawingDraft({ preserveSeenWords });
+  if (previousWord) state.word = previousWord;
+  if (state.route === "draw") {
+    randomWord();
+    renderDraw();
+  }
+  else route("draw");
+}
+function selectDrawingColor(button, buttons = document.querySelectorAll(".color")) {
+  buttons.forEach(item => item.classList.remove("selected"));
+  button.classList.add("selected");
+  state.ctx.globalCompositeOperation = "source-over";
+  state.ctx.strokeStyle = button.dataset.color;
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
@@ -690,7 +730,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.3</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.2.0</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -707,14 +747,9 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"].map((c, i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${c}" style="background:${c}" aria-label="색상 선택"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
-  document.querySelectorAll(".color").forEach(button => button.onclick = () => {
-    document.querySelectorAll(".color").forEach(x => x.classList.remove("selected"));
-    button.classList.add("selected");
-    state.ctx.globalCompositeOperation = "source-over";
-    state.ctx.strokeStyle = button.dataset.color;
-  });
+  document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
   eraser.onclick = () => { state.ctx.globalCompositeOperation = "destination-out"; };
   undo.onclick = undoCanvas;
   clearCanvas.onclick = () => clearCanvasBoard(true);
@@ -757,30 +792,66 @@ function renderDraw() {
       showToast("직접 제시어를 적용했어요!");
     };
   }
-  saveDrawing.onclick = async () => {
-    if (state.publishing) return;
-    if (!state.dirty) {
-      showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
-      return;
-    }
-    state.publishing = true;
-    saveDrawing.disabled = true;
-    saveDrawing.textContent = "저장하는 중…";
-    try {
-      edit ? await updateDrawing(edit.id) : await publishDrawing();
+  saveDrawing.onclick = () => saveDrawingDraft(edit, saveDrawing);
+}
+
+async function saveDrawingDraft(edit, saveButton) {
+  if (state.publishing || state.drawingPublished) return "ignored";
+  if (!state.dirty) {
+    showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
+    return "invalid";
+  }
+  state.publishing = true;
+  saveButton.disabled = true;
+  saveButton.textContent = "저장하는 중…";
+  let published = false;
+  try {
+    if (edit) {
+      await updateDrawing(edit.id);
       state.editDrawing = null;
       state.word = null;
-      showToast(edit ? "수정했어요!" : "그림을 게시했어요!");
+      showToast("수정했어요!");
       route("manage");
-    } catch (error) {
-      console.error("그림 저장 실패:", error?.code || "unknown", error);
-      showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
-      saveDrawing.disabled = false;
-      saveDrawing.textContent = edit ? "수정 저장하기" : "게시하기";
-    } finally {
-      state.publishing = false;
+    } else {
+      await publishDrawing();
+      state.drawingPublished = true;
+      published = true;
+    }
+  } catch (error) {
+    console.error("그림 저장 실패:", error?.code || "unknown", error);
+    showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
+    saveButton.disabled = false;
+    saveButton.textContent = edit ? "수정 저장하기" : "게시하기";
+    return "failed";
+  } finally {
+    state.publishing = false;
+  }
+  if (published) {
+    showDrawingPublishedModal();
+    return "published";
+  }
+  return "updated";
+}
+
+function showDrawingPublishedModal() {
+  const root = document.querySelector("#modalRoot");
+  root.innerHTML = `<div class="modal-backdrop publish-complete-backdrop"><div class="modal publish-complete-modal" role="dialog" aria-modal="true" aria-labelledby="publishCompleteTitle"><h3 id="publishCompleteTitle">그림을 게시했어요! 🎉</h3><p>다음에는 무엇을 할까요?</p><div class="publish-complete-actions"><button class="button primary full" data-draw-again>다른 그림 그리기</button><button class="button ghost full" data-go-manage>내 그림 관리</button></div></div></div>`;
+  const buttons = [...root.querySelectorAll("button")];
+  let handled = false;
+  const choose = destination => {
+    if (handled || !state.drawingPublished) return;
+    handled = true;
+    buttons.forEach(button => { button.disabled = true; });
+    root.innerHTML = "";
+    if (destination === "draw") startNewDrawing({ preserveSeenWords: true });
+    else {
+      resetDrawingDraft();
+      route("manage");
     }
   };
+  root.querySelector("[data-draw-again]").onclick = () => choose("draw");
+  root.querySelector("[data-go-manage]").onclick = () => choose("manage");
+  root.querySelector("[data-draw-again]").focus();
 }
 
 function preventIfCancelable(event) { if (event && event.cancelable) event.preventDefault(); }
@@ -817,6 +888,7 @@ function setupCanvas(imageData) {
   state.ctx = state.canvas.getContext("2d", { willReadFrequently: true });
   state.ctx.lineCap = "round";
   state.ctx.lineJoin = "round";
+  state.ctx.globalCompositeOperation = "source-over";
   state.ctx.strokeStyle = "#3e3a48";
   state.ctx.lineWidth = 9;
   state.history = [];
@@ -950,7 +1022,6 @@ async function publishDrawing() {
   }
   state.detailImageCache.set(id, optimized.imageData);
   state.thumbnailCache.set(id, optimized.thumbnailData);
-  state.word = null;
 }
 async function expireOldDrawings() {
   if (!db) return;
@@ -1430,7 +1501,12 @@ async function renderManage() {
     }));
     const list = all.filter(d => d && d.status === state.manageStatus).sort((a, b) => b.createdAt - a.createdAt);
     await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
-    appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
+    appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><button id="newDrawingFromManage" class="button primary manage-new-drawing">✏️ 새 그림 그리기</button><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
+    document.querySelector("#newDrawingFromManage").onclick = event => {
+      if (event.currentTarget.disabled) return;
+      event.currentTarget.disabled = true;
+      startNewDrawing();
+    };
     document.querySelectorAll("[data-status]").forEach(button => button.onclick = () => { state.manageStatus = button.dataset.status; renderManage(); });
     document.querySelectorAll("[data-edit]").forEach(button => button.onclick = () => {
       const d = list.find(x => x.id === button.dataset.edit);

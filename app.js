@@ -1187,12 +1187,14 @@ function cancelSolveImageLoading() {
   if (state.solveLoader) {
     state.solveLoader.cancelled = true;
     state.solveLoader.queue.length = 0;
+    state.solveLoader.pendingWaiters.forEach(cancel => cancel());
+    state.solveLoader.pendingWaiters.clear();
     state.solveLoader = null;
   }
 }
 function createSolveLoader(request) {
   cancelSolveImageLoading();
-  const loader = { queue: [], active: 0, cancelled: false, transitionId: request.transitionId, request };
+  const loader = { queue: [], active: 0, cancelled: false, transitionId: request.transitionId, request, pendingWaiters: new Set() };
   state.solveLoader = loader;
   return loader;
 }
@@ -1217,6 +1219,30 @@ function runSolveImageQueue(loader) {
 function solveImageMarkup(drawingId) {
   return `<img data-solve-image="${drawingId}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span>`;
 }
+function waitForSolveImageLoad(image, src, loader) {
+  return new Promise(resolve => {
+    let settled = false;
+    const cleanup = () => {
+      image.removeEventListener("load", onLoad);
+      image.removeEventListener("error", onError);
+      loader.pendingWaiters.delete(cancel);
+    };
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const onLoad = () => finish(image.naturalWidth > 0 ? "loaded" : "error");
+    const onError = () => finish("error");
+    const cancel = () => finish("cancelled");
+    loader.pendingWaiters.add(cancel);
+    image.addEventListener("load", onLoad);
+    image.addEventListener("error", onError);
+    image.src = src;
+    if (image.complete) queueMicrotask(() => image.naturalWidth > 0 ? onLoad() : onError());
+  });
+}
 function queueSolveImage(loader, image, drawing) {
   if (!image || image.dataset.queued || !isSolveLoaderCurrent(loader)) return;
   image.dataset.queued = "true";
@@ -1224,12 +1250,17 @@ function queueSolveImage(loader, image, drawing) {
     try {
       const src = await loadDrawingImage(drawing, "detail");
       if (!isSolveLoaderCurrent(loader) || !image.isConnected) return;
-      image.src = src;
+      const result = await waitForSolveImageLoad(image, src, loader);
+      if (result === "cancelled" || !isSolveLoaderCurrent(loader) || !image.isConnected) return;
+      if (result !== "loaded") throw new Error("solve-image-render-failed");
+      const slot = image.parentElement;
+      if (!slot?.isConnected || slot.querySelector(`[data-solve-image="${drawing.id}"]`) !== image) return;
       image.classList.add("loaded");
-      image.parentElement.querySelector(".image-loading")?.remove();
+      slot.querySelector(".image-loading")?.remove();
     } catch (_) {
       if (!isSolveLoaderCurrent(loader) || !image.isConnected) return;
       const slot = image.parentElement;
+      if (!slot?.isConnected || slot.querySelector(`[data-solve-image="${drawing.id}"]`) !== image) return;
       slot.innerHTML = `<span class="image-error">이미지를 불러오지 못했어요.</span><button class="image-retry" data-solve-retry="${drawing.id}">다시 불러오기</button>`;
       const retry = slot.querySelector("[data-solve-retry]");
       retry.onclick = () => {

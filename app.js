@@ -286,7 +286,10 @@ const state = {
   drawingPublished: false,
   feedbackView: "all",
   feedbackSort: "new",
-  editingFeedback: null
+  editingFeedback: null,
+  renderGeneration: 0,
+  galleryLoadGeneration: 0,
+  editImageGeneration: 0
 };
 let db = null;
 let auth = null;
@@ -317,6 +320,37 @@ function invalidateGalleryListsByStatus(status) {
   for (const key of Object.keys(state.galleryLists)) {
     if (key.startsWith(prefix)) delete state.galleryLists[key];
   }
+}
+function currentRenderToken() { return state.renderGeneration; }
+function isRenderCurrent(token) { return token === state.renderGeneration; }
+function cleanupScreenResources({ preserveDrawing = false } = {}) {
+  state.galleryObserver?.disconnect();
+  state.galleryObserver = null;
+  state.galleryLoadGeneration++;
+  state.galleryLoadQueue = [];
+  state.galleryActiveLoads = 0;
+  state.editImageGeneration++;
+  unlockDrawingScroll?.();
+  state.drawing = false;
+  state.activePointerId = null;
+  if (!preserveDrawing) {
+    state.canvas = null;
+    state.ctx = null;
+    state.history = [];
+    state.dirty = false;
+    state.publishing = false;
+  }
+}
+function beginRouteTransition(name, { historyMode = "push", historyState = { route: name, galleryDetail: false }, url = `#${name}`, preserveDrawing = false } = {}) {
+  cleanupScreenResources({ preserveDrawing });
+  state.renderGeneration++;
+  if (name === "gallery" && state.route !== "gallery") { state.galleryView = "thumb"; state.galleryIndex = 0; }
+  if (name === "draw" && state.route !== "draw") { state.seenWordKeys.clear(); if (!state.editDrawing) state.word = null; }
+  state.route = name;
+  if (name !== "draw") state.editDrawing = null;
+  if (historyMode === "replace") history.replaceState(historyState, "", url);
+  else if (historyMode === "push") history.pushState(historyState, "", url);
+  return currentRenderToken();
 }
 function showToast(message) {
   const el = document.querySelector("#toast");
@@ -463,30 +497,16 @@ function isConfigured() {
   return false;
 }
 function route(name, options = {}) {
-  if (name === "gallery" && state.route !== "gallery") {
-    state.galleryView = "thumb";
-    state.galleryIndex = 0;
-  }
-  if (name === "draw" && state.route !== "draw") {
-    state.seenWordKeys.clear();
-    if (!state.editDrawing) state.word = null;
-  }
-  state.route = name;
-  if (name !== "draw") state.editDrawing = null;
-  history.pushState({ route: name, galleryDetail: false }, "", `#${name}`);
-  renderRoute(options);
+  const token = beginRouteTransition(name, options);
+  renderRoute({ ...options, token });
 }
 
 window.addEventListener("popstate", event => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
-  if (name === "draw" && state.route !== "draw") {
-    state.seenWordKeys.clear();
-    if (!state.editDrawing) state.word = null;
-  }
-  if (name === "gallery") state.galleryView = event.state?.galleryDetail ? "frame" : "thumb";
-  if (name === "gallery" && state.route !== "gallery") state.galleryIndex = 0;
-  state.route = name;
-  renderRoute();
+  const galleryDetail = name === "gallery" && !!event.state?.galleryDetail;
+  if (name === "gallery") state.galleryView = galleryDetail ? "frame" : "thumb";
+  const token = beginRouteTransition(name, { historyMode: "none", historyState: event.state || { route: name, galleryDetail }, preserveDrawing: false });
+  renderRoute({ token });
 });
 document.addEventListener("click", e => {
   const target = e.target.closest("[data-route]");
@@ -607,9 +627,8 @@ async function boot() {
     }
     state.authReady = true;
     const initial = state.user ? (location.hash.slice(1) || "home") : "login";
-    state.route = initial;
-    history.replaceState({ route: initial }, "", `#${initial}`);
-    renderRoute();
+    const token = beginRouteTransition(initial, { historyMode: "replace", historyState: { route: initial }, url: `#${initial}` });
+    renderRoute({ token });
     if (state.user) expireOldDrawings().catch(console.error);
   });
 }
@@ -654,7 +673,7 @@ async function loadCurrentUser(userId = auth?.currentUser?.uid) {
   return state.user;
 }
 
-function renderRoute() {
+function renderRoute(options = {}) {
   const publicRoute = state.route === "login";
   headerEl.classList.toggle("hidden", publicRoute);
   if (!publicRoute && !state.user) {
@@ -662,7 +681,7 @@ function renderRoute() {
     return renderLogin();
   }
   const routes = { login: renderLogin, home: renderHome, draw: renderDraw, solve: renderSolve, gallery: renderGallery, ranking: renderRanking, manage: renderManage, guide: renderGuide, feedback: renderFeedback };
-  (routes[state.route] || renderHome)();
+  (routes[state.route] || renderHome)(options);
 }
 function renderLogin() {
   appEl.innerHTML = `<section class="screen center-screen"><div class="welcome-art">🖼️</div><div style="text-align:center"><h1>캐치갤러리</h1><p class="subtitle">닉네임과 비밀번호로 로그인해요!</p></div><form id="loginForm" class="card"><label class="field-label" for="nickname">닉네임</label><input id="nickname" maxlength="8" autocomplete="username" placeholder="닉네임 입력" required><label class="field-label" for="password">비밀번호</label><input id="password" type="password" minlength="6" autocomplete="current-password" placeholder="6자 이상" required><p class="password-warning">평소 쓰는 비밀번호를 사용하지 마세요.</p><p class="helper">같은 닉네임과 비밀번호로 다른 기기에서도 기록을 이어갈 수 있습니다.</p><div class="login-actions"><button id="loginButton" class="button primary full" type="submit">로그인</button><button id="signupButton" class="button ghost signup-open-button" type="button">처음이신가요? 회원가입</button></div></form></section>`;
@@ -801,6 +820,8 @@ async function saveDrawingDraft(edit, saveButton) {
     showToast(edit ? "그림을 조금 수정해 주세요." : "빈 그림은 게시할 수 없어요.");
     return "invalid";
   }
+  const token = typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration;
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   state.publishing = true;
   saveButton.disabled = true;
   saveButton.textContent = "저장하는 중…";
@@ -808,17 +829,20 @@ async function saveDrawingDraft(edit, saveButton) {
   try {
     if (edit) {
       await updateDrawing(edit.id);
+      if (!isCurrent()) return "stale";
       state.editDrawing = null;
       state.word = null;
       showToast("수정했어요!");
       route("manage");
     } else {
       await publishDrawing();
+      if (!isCurrent()) return "stale";
       state.drawingPublished = true;
       published = true;
     }
   } catch (error) {
     console.error("그림 저장 실패:", error?.code || "unknown", error);
+    if (!isCurrent()) return "stale";
     showToast(userErrorMessage(error, "그림을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
     saveButton.disabled = false;
     saveButton.textContent = edit ? "수정 저장하기" : "게시하기";
@@ -827,6 +851,7 @@ async function saveDrawingDraft(edit, saveButton) {
     state.publishing = false;
   }
   if (published) {
+    if (!isCurrent()) return "stale";
     showDrawingPublishedModal();
     return "published";
   }
@@ -949,8 +974,11 @@ function setupCanvas(imageData) {
   state.canvas.addEventListener("lostpointercapture", lost);
 
   if (imageData) {
+    const editImageGeneration = state.editImageGeneration;
+    const canvas = state.canvas;
+    const ctx = state.ctx;
     const img = new Image();
-    img.onload = () => { state.ctx.drawImage(img, 0, 0, 720, 720); };
+    img.onload = () => { if (editImageGeneration === state.editImageGeneration && canvas === state.canvas && ctx === state.ctx) ctx.drawImage(img, 0, 0, 720, 720); };
     img.src = imageData;
   }
 }
@@ -1057,13 +1085,17 @@ async function loadOpenDrawings(sort = "new") {
   });
   return list.sort((a, b) => sort === "new" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
 }
-async function renderSolve() {
+async function renderSolve(options = {}) {
+  const token = options.token ?? (typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration);
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   loading();
   const sort = sessionStorage.getItem("solveSort") || "new";
   try {
     const [list, recentSuccesses] = await Promise.all([loadOpenDrawings(sort), loadRecentSolverSuccessCount()]);
+    if (!isCurrent()) return;
     await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
+    if (!isCurrent()) return;
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
@@ -1105,6 +1137,7 @@ async function renderSolve() {
       }
     });
   } catch (error) {
+    if (!isCurrent()) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "그림을 불러오지 못했어요.")}</section>`;
   }
@@ -1169,7 +1202,9 @@ async function loadGalleryDrawings(status = state.galleryTab, sort = state.galle
   return sorted;
 }
 function galleryListKey() { return `${state.galleryTab}:${state.gallerySort}`; }
-async function renderGallery(force = false) {
+async function renderGallery(options = {}, force = false) {
+  const token = options.token ?? (typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration);
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   const key = galleryListKey();
   if (force) delete state.galleryLists[key];
@@ -1177,6 +1212,7 @@ async function renderGallery(force = false) {
   if (!state.galleryLists[key]) loading();
   try {
     const list = state.galleryLists[key] || await loadGalleryDrawings();
+    if (!isCurrent()) return;
     state.galleryLists[key] = list;
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
     const renderedAt = performance.now();
@@ -1186,6 +1222,7 @@ async function renderGallery(force = false) {
     console.info(`[gallery] cards rendered ${Math.round(performance.now() - renderedAt)}ms · server reread=${!cacheHit}`);
     if (state.galleryView === "thumb") requestAnimationFrame(() => scrollTo(0, state.galleryScroll[key] || 0));
   } catch (error) {
+    if (!isCurrent()) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "전시장을 불러오지 못했어요.")}</section>`;
   }
@@ -1251,18 +1288,21 @@ function bindGalleryContent(list) {
   }));
   if (state.galleryView === "thumb") observeGalleryThumbnails(list); else loadGalleryDetail(list[state.galleryIndex], list);
 }
-function enqueueGalleryLoad(task) {
-  state.galleryLoadQueue.push(task);
+function enqueueGalleryLoad(task, generation = state.galleryLoadGeneration) {
+  state.galleryLoadQueue.push({ task, generation });
   runGalleryLoadQueue();
 }
 function runGalleryLoadQueue() {
   while (state.galleryActiveLoads < IMAGE_OPTIONS.maxConcurrentLoads && state.galleryLoadQueue.length) {
     state.galleryActiveLoads++;
-    Promise.resolve(state.galleryLoadQueue.shift()()).finally(() => { state.galleryActiveLoads--; runGalleryLoadQueue(); });
+    const item = state.galleryLoadQueue.shift();
+    if (!item || item.generation !== state.galleryLoadGeneration) { state.galleryActiveLoads--; continue; }
+    Promise.resolve(item.task()).finally(() => { state.galleryActiveLoads = Math.max(0, state.galleryActiveLoads - 1); if (item.generation === state.galleryLoadGeneration) runGalleryLoadQueue(); });
   }
 }
 function observeGalleryThumbnails(list) {
   state.galleryObserver?.disconnect();
+  const generation = state.galleryLoadGeneration;
   const started = performance.now();
   const images = [...document.querySelectorAll("[data-thumbnail-image]")];
   const initiallyVisible = new Set(images.filter(image => image.getBoundingClientRect().top < innerHeight + 40));
@@ -1275,7 +1315,7 @@ function observeGalleryThumbnails(list) {
       const first = !state.thumbnailCache.size;
       try {
         const [src] = await Promise.all([loadDrawingImage(drawing, "thumbnail"), ensureLikeState(drawing.id)]);
-        if (!image.isConnected) return;
+        if (generation !== state.galleryLoadGeneration || !image.isConnected) return;
         image.src = src; image.classList.add("loaded");
         image.parentElement.querySelector(".image-loading")?.remove();
         syncGalleryLike(drawing.id);
@@ -1283,10 +1323,10 @@ function observeGalleryThumbnails(list) {
         initiallyVisible.delete(image);
         if (!initiallyVisible.size && !visibleLogged) { visibleLogged = true; console.info(`[gallery] visible thumbnails complete ${Math.round(performance.now() - started)}ms`); }
       } catch (_) {
-        if (image.isConnected) image.parentElement.innerHTML = `<button class="image-retry" data-image-retry="${drawing.id}">다시 불러오기</button>`;
+        if (generation === state.galleryLoadGeneration && image.isConnected) image.parentElement.innerHTML = `<button class="image-retry" data-image-retry="${drawing.id}">다시 불러오기</button>`;
         document.querySelector(`[data-image-retry="${drawing.id}"]`)?.addEventListener("click", () => { state.thumbnailCache.delete(drawing.id); renderGalleryContent(list); });
       }
-    });
+    }, generation);
   };
   if ("IntersectionObserver" in window) {
     state.galleryObserver = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) { state.galleryObserver.unobserve(entry.target); load(entry.target); } }), { rootMargin: "240px" });
@@ -1318,9 +1358,11 @@ function syncGalleryLike(id) {
 }
 async function loadGalleryDetail(drawing, list) {
   if (!drawing) return;
+  const generation = state.galleryLoadGeneration;
   const started = performance.now();
   try {
     const [src] = await Promise.all([loadDrawingImage(drawing), ensureLikeState(drawing.id)]);
+    if (generation !== state.galleryLoadGeneration) return;
     const image = document.querySelector(`[data-detail-image="${drawing.id}"]`);
     if (image) { image.src = src; image.classList.add("loaded"); image.parentElement.querySelector(".image-loading")?.remove(); }
     syncGalleryLike(drawing.id);
@@ -1328,6 +1370,7 @@ async function loadGalleryDetail(drawing, list) {
     const neighbor = list[state.galleryIndex + 1] || list[state.galleryIndex - 1];
     if (neighbor) loadDrawingImage(neighbor).catch(() => {});
   } catch (_) {
+    if (generation !== state.galleryLoadGeneration) return;
     const slot = document.querySelector(`[data-detail-image="${drawing.id}"]`)?.parentElement;
     if (slot) slot.innerHTML = `<button class="image-retry" data-detail-retry>이미지 다시 불러오기</button>`;
     slot?.querySelector("[data-detail-retry]")?.addEventListener("click", () => { state.detailImageCache.delete(drawing.id); renderGalleryContent(list); });
@@ -1462,10 +1505,13 @@ async function loadRanking(type = state.rankingType) {
   });
   return list.sort((a, b) => (b.score || 0) - (a.score || 0) || a.createdAt - b.createdAt).slice(0, 30);
 }
-async function renderRanking() {
+async function renderRanking(options = {}) {
+  const token = options.token ?? (typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration);
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   loading();
   try {
     const list = await loadRanking();
+    if (!isCurrent()) return;
     const labels = { total: "종합 랭킹", drawer: "그리기 랭킹", solver: "맞히기 랭킹" };
     appEl.innerHTML = `<section class="screen"><h2>랭킹</h2><p class="muted">${labels[state.rankingType]} 상위 30명까지 보여드려요.</p><div class="tabs ranking-tabs"><button data-ranking="total" class="${state.rankingType === "total" ? "active" : ""}">종합</button><button data-ranking="drawer" class="${state.rankingType === "drawer" ? "active" : ""}">그리기</button><button data-ranking="solver" class="${state.rankingType === "solver" ? "active" : ""}">맞히기</button></div><div>${list.map((u, i) => `<div class="rank-row ${u.id === state.user.id ? "mine" : ""}"><div class="rank-num">${i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div><div><b>${escapeHtml(u.nickname)}</b>${u.id === state.user.id ? "<small> · 나</small>" : ""}</div><div class="rank-score">${Number(u.score) || 0}점</div></div>`).join("") || emptyHtml("", "아직 랭킹이 비어 있어요.")}</div><button id="deleteRanking" class="button danger full" style="margin-top:20px">내 랭킹 삭제</button></section>`;
     document.querySelectorAll("[data-ranking]").forEach(button => button.onclick = () => { state.rankingType = button.dataset.ranking; renderRanking(); });
@@ -1475,6 +1521,7 @@ async function renderRanking() {
       await signOut();
     });
   } catch (error) {
+    if (!isCurrent()) return;
     console.error(error);
   }
 }
@@ -1488,7 +1535,9 @@ async function deleteMyRanking() {
     [`scoreClaims/${state.user.id}`]: null
   });
 }
-async function renderManage() {
+async function renderManage(options = {}) {
+  const token = options.token ?? (typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration);
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   if (!isConfigured()) { appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   loading();
   try {
@@ -1501,6 +1550,7 @@ async function renderManage() {
     }));
     const list = all.filter(d => d && d.status === state.manageStatus).sort((a, b) => b.createdAt - a.createdAt);
     await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
+    if (!isCurrent()) return;
     appEl.innerHTML = `<section class="screen"><h2>내 그림 관리</h2><p class="muted">내가 그린 그림을 상태별로 모아봐요.</p><button id="newDrawingFromManage" class="button primary manage-new-drawing">✏️ 새 그림 그리기</button><div class="tabs status-tabs">${Object.entries(STATUS_LABEL).map(([k, v]) => `<button data-status="${k}" class="${state.manageStatus === k ? "active" : ""}">${v}</button>`).join("")}</div><div style="margin-top:15px">${list.length ? list.map(manageCard).join("") : emptyHtml("", "여기에 해당하는 그림이 없어요.")}</div></section>`;
     document.querySelector("#newDrawingFromManage").onclick = event => {
       if (event.currentTarget.disabled) return;
@@ -1520,6 +1570,7 @@ async function renderManage() {
       renderManage();
     }));
   } catch (error) {
+    if (!isCurrent()) return;
     console.error(error);
   }
 }
@@ -1601,14 +1652,18 @@ async function toggleFeedbackHidden(id, hidden) {
   if (!state.isAdmin) throw new Error("관리자만 관리할 수 있어요.");
   await db.ref(`feedbackMeta/${id}`).update({ hidden, updatedAt: serverNow() });
 }
-async function renderFeedback() {
+async function renderFeedback(options = {}) {
+  const token = options.token ?? (typeof currentRenderToken === "function" ? currentRenderToken() : state.renderGeneration);
+  const isCurrent = () => typeof isRenderCurrent !== "function" || isRenderCurrent(token);
   loading();
   try {
     const list = await loadFeedback();
+    if (!isCurrent()) return;
     const editing = state.editingFeedback;
     appEl.innerHTML = `<section class="screen"><h2>의견 보내기</h2><p class="muted">게임에 바라는 점이나 불편한 점을 남겨주세요.</p><form id="feedbackForm" class="card feedback-form"><textarea id="feedbackText" maxlength="300" placeholder="의견을 적어주세요" required>${editing ? escapeHtml(editing.content) : ""}</textarea>${editing ? "" : `<label class="check-row"><input id="anonymousCheck" type="checkbox"> 익명으로 올리기</label><label class="check-row"><input id="secretCheck" type="checkbox"> 비밀글로 올리기</label>`}<div class="button-row">${editing ? '<button id="cancelFeedbackEdit" class="button ghost" type="button">취소</button>' : ""}<button class="button primary" type="submit">${editing ? "수정 저장" : "보내기"}</button></div></form><div class="feedback-view-tabs"><button data-feedback-view="all" class="${state.feedbackView === "all" ? "active" : ""}">전체 글</button><button data-feedback-view="mine" class="${state.feedbackView === "mine" ? "active" : ""}">내 글</button></div><div class="feedback-sorts">${FEEDBACK_SORTS.map(([key, label]) => `<button data-feedback-sort="${key}" class="${state.feedbackSort === key ? "active" : ""}">${label}</button>`).join("")}</div><div>${list.length ? list.map(feedbackCard).join("") : emptyHtml("", "아직 의견이 없어요.")}</div></section>`;
     bindFeedback(list);
   } catch (error) {
+    if (!isCurrent()) return;
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "의견을 불러오지 못했어요.")}</section>`;
   }

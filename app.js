@@ -1798,20 +1798,28 @@ async function loadManageDrawings() {
 async function loadManageEditDrawing(drawing, button, request) {
   const operationId = ++state.manageEditRequestId;
   const originalText = button.textContent;
+  const originalDisabled = button.disabled;
   button.disabled = true;
   button.textContent = "불러오는 중…";
-  const owns = () => state.route === "manage" && isScreenRequestCurrent(request) && state.manageEditRequestId === operationId && button.isConnected;
+  const ownsResult = () => state.route === "manage" && isScreenRequestCurrent(request) && state.manageEditRequestId === operationId && button.isConnected;
+  const canRestoreButton = () => state.route === "manage" && isScreenRequestCurrent(request) && button.isConnected;
   try {
     const imageData = await loadDrawingImage(drawing, "detail");
-    if (!owns()) return;
+    if (!ownsResult()) return;
     state.editDrawing = { ...drawing, imageData };
     state.word = { word: drawing.word, category: drawing.category, answers: drawing.answers || [drawing.word], isCustomWord: !!drawing.isCustomWord };
     route("draw");
   } catch (error) {
-    if (owns()) showToast(userErrorMessage(error, "그림을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."));
+    if (ownsResult()) showToast(userErrorMessage(error, "그림을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."));
   } finally {
-    if (owns()) { button.disabled = false; button.textContent = originalText; }
+    if (canRestoreButton()) { button.disabled = originalDisabled; button.textContent = originalText; }
   }
+}
+function updateManageDrawingAfterWithdraw(drawingId, now = serverNow()) {
+  const drawing = state.manageDrawings?.find(item => item.id === drawingId);
+  if (!drawing) return false;
+  Object.assign(drawing, { status: "withdrawn", withdrawnAt: now, updatedAt: now });
+  return true;
 }
 async function renderManage() {
   const request = beginScreenRequest("manage");
@@ -1843,8 +1851,7 @@ async function renderManage() {
     document.querySelectorAll("[data-withdraw]").forEach(button => button.onclick = () => confirmModal("정말 이 그림을 회수할까요?", "회수한 그림은 복구할 수 없고,\n전시장에도 전시되지 않습니다.", async () => {
       await withdrawDrawing(button.dataset.withdraw);
       if (!isScreenRequestCurrent(request)) return;
-      const drawing = state.manageDrawings?.find(item => item.id === button.dataset.withdraw);
-      if (drawing) Object.assign(drawing, { status: "withdrawn", withdrawnAt: serverNow(), updatedAt: serverNow() });
+      updateManageDrawingAfterWithdraw(button.dataset.withdraw);
       showToast("그림을 회수했어요.");
       renderManage();
     }));

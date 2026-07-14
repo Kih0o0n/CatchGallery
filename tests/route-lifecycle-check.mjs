@@ -42,7 +42,7 @@ function deferred() {
     editImageRequestId: 4, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 7, dirty: true, activeSaveOperationId: 9, publishing: true
   };
-  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {});
+  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {});
   cleanup();
   cleanup();
   assert.equal(disconnected, 1, "IntersectionObserver must be disconnected once and cleared");

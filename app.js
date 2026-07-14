@@ -305,6 +305,12 @@ function drawerName(d) { return d.drawerNickname || d.drawerDisplayName || "알 
 function solverName(d) { return d.solverNickname || d.solverDisplayName || "알 수 없음"; }
 function drawingOwnerId(d) { return d?.drawerId || d?.drawerUid || d?.ownerUid || d?.authorUid || d?.userId || null; }
 function isOwnDrawing(d) { return !!state.user?.id && drawingOwnerId(d) === state.user.id; }
+function invalidateGalleryListsByStatus(status) {
+  const prefix = `${status}:`;
+  for (const key of Object.keys(state.galleryLists)) {
+    if (key.startsWith(prefix)) delete state.galleryLists[key];
+  }
+}
 function showToast(message) {
   const el = document.querySelector("#toast");
   el.textContent = message;
@@ -684,7 +690,7 @@ function openSignupModal() {
 }
 function renderHome() {
   scoreEl.textContent = `${state.user.score || 0}점`;
-  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.2</div></section>`;
+  appEl.innerHTML = `<section class="screen"><div class="home-greeting"><h2>${escapeHtml(state.user.nickname)}님, 반가워요!</h2><p class="muted">그림을 그리고, 다른 사람의 그림도 맞혀보세요.</p></div><div class="main-actions"><button class="main-action draw" data-route="draw"><span class="action-icon">✏️</span><span class="action-title">그림 그리기</span><span class="action-copy">제시어를 그림으로 표현해요</span></button><button class="main-action solve" data-route="solve"><span class="action-icon">🔍</span><span class="action-title">정답 맞히기</span><span class="action-copy">이 그림은 무엇일까요?</span></button></div><div class="sub-actions"><button class="sub-action" data-route="gallery"><span>🖼️</span>전시장</button><button class="sub-action" data-route="ranking"><span>🏆</span>랭킹</button><button class="sub-action" data-route="manage"><span>🗂️</span>내 그림 관리</button><button class="sub-action" data-route="guide"><span>📖</span>게임설명</button><button class="sub-action feedback-menu" data-route="feedback"><span>💌</span>의견 보내기</button></div><button id="logoutButton" class="button ghost full logout-button">로그아웃</button><div class="home-version" aria-label="앱 버전">v1.1.3</div></section>`;
   document.querySelector("#logoutButton").onclick = async event => {
     const button = event.currentTarget;
     if (button.disabled) return;
@@ -965,7 +971,10 @@ async function expireOldDrawings() {
       }, false));
     }
   });
-  await Promise.all(jobs);
+  const results = await Promise.all(jobs);
+  if (results.some(result => result.committed && result.snapshot.val()?.status === "expired")) {
+    invalidateGalleryListsByStatus("expired");
+  }
 }
 async function loadOpenDrawings(sort = "new") {
   await expireOldDrawings();
@@ -1697,7 +1706,11 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     return solvedUpdate;
   }, null, false);
 
+  const transactionDrawing = result.committed ? result.snapshot.val() : null;
+  if (transactionDrawing?.status === "expired") invalidateGalleryListsByStatus("expired");
+
   if (settledDrawing) {
+    invalidateGalleryListsByStatus("solved");
     await claimAnswerRewards(resolvedId, settledDrawing);
     return outcome;
   }
@@ -1705,7 +1718,8 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   if (!outcome.correct) return outcome;
   if (!result.committed) return { correct: false, message: "다른 사람이 먼저 맞혔어요." };
 
-  await claimAnswerRewards(resolvedId, result.snapshot.val());
+  invalidateGalleryListsByStatus("solved");
+  await claimAnswerRewards(resolvedId, transactionDrawing);
   return outcome;
 }
 async function toggleLike(drawingId, cachedDrawing = null) {

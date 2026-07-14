@@ -268,6 +268,8 @@ const state = {
   detailImageCache: new Map(),
   likeCache: new Map(),
   pendingLikes: new Set(),
+  solveObserver: null,
+  solveLoader: null,
   galleryObserver: null,
   galleryLoader: null,
   migrationCursor: null,
@@ -476,6 +478,7 @@ function isConfigured() {
   return false;
 }
 function cleanupScreenResources() {
+  cancelSolveImageLoading();
   state.galleryObserver?.disconnect();
   state.galleryObserver = null;
   if (state.galleryLoader) {
@@ -1117,12 +1120,12 @@ async function loadOpenDrawings(sort = "new") {
 }
 async function renderSolve() {
   const request = beginScreenRequest("solve");
+  cancelSolveImageLoading();
   if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   loading(request);
   const sort = sessionStorage.getItem("solveSort") || "new";
   try {
     const [list, recentSuccesses] = await Promise.all([loadOpenDrawings(sort), loadRecentSolverSuccessCount()]);
-    await Promise.all(list.map(async drawing => { drawing.imageData = await loadDrawingImage(drawing); }));
     if (!isScreenRequestCurrent(request)) return;
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
@@ -1167,6 +1170,7 @@ async function renderSolve() {
         button.textContent = originalText;
       }
     });
+    observeSolveImages(list, request);
   } catch (error) {
     if (!isScreenRequestCurrent(request)) return;
     console.error(error);
@@ -1175,7 +1179,84 @@ async function renderSolve() {
 }
 function openDrawingCard(d, recentSuccesses = 0) {
   const mine = isOwnDrawing(d);
-  return `<article class="card drawing-card"><img src="${d.imageData}" alt="도전 중인 그림"><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}">카테고리 힌트 보기 (-4점)</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, false)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}">카테고리 힌트 보기 (-4점)</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, false)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+}
+function cancelSolveImageLoading() {
+  state.solveObserver?.disconnect();
+  state.solveObserver = null;
+  if (state.solveLoader) {
+    state.solveLoader.cancelled = true;
+    state.solveLoader.queue.length = 0;
+    state.solveLoader = null;
+  }
+}
+function createSolveLoader(request) {
+  cancelSolveImageLoading();
+  const loader = { queue: [], active: 0, cancelled: false, transitionId: request.transitionId, request };
+  state.solveLoader = loader;
+  return loader;
+}
+function isSolveLoaderCurrent(loader) {
+  return !loader.cancelled && state.solveLoader === loader && isScreenRequestCurrent(loader.request);
+}
+function enqueueSolveImage(loader, task) {
+  if (loader.cancelled) return;
+  loader.queue.push(task);
+  runSolveImageQueue(loader);
+}
+function runSolveImageQueue(loader) {
+  while (!loader.cancelled && loader.active < IMAGE_OPTIONS.maxConcurrentLoads && loader.queue.length) {
+    loader.active++;
+    const task = loader.queue.shift();
+    Promise.resolve(task()).finally(() => {
+      loader.active--;
+      if (!loader.cancelled) runSolveImageQueue(loader);
+    });
+  }
+}
+function solveImageMarkup(drawingId) {
+  return `<img data-solve-image="${drawingId}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span>`;
+}
+function queueSolveImage(loader, image, drawing) {
+  if (!image || image.dataset.queued || !isSolveLoaderCurrent(loader)) return;
+  image.dataset.queued = "true";
+  enqueueSolveImage(loader, async () => {
+    try {
+      const src = await loadDrawingImage(drawing, "detail");
+      if (!isSolveLoaderCurrent(loader) || !image.isConnected) return;
+      image.src = src;
+      image.classList.add("loaded");
+      image.parentElement.querySelector(".image-loading")?.remove();
+    } catch (_) {
+      if (!isSolveLoaderCurrent(loader) || !image.isConnected) return;
+      const slot = image.parentElement;
+      slot.innerHTML = `<span class="image-error">이미지를 불러오지 못했어요.</span><button class="image-retry" data-solve-retry="${drawing.id}">다시 불러오기</button>`;
+      const retry = slot.querySelector("[data-solve-retry]");
+      retry.onclick = () => {
+        if (retry.disabled || !isSolveLoaderCurrent(loader)) return;
+        retry.disabled = true;
+        state.detailImageCache.delete(drawing.id);
+        slot.innerHTML = solveImageMarkup(drawing.id);
+        queueSolveImage(loader, slot.querySelector("[data-solve-image]"), drawing);
+      };
+    }
+  });
+}
+function observeSolveImages(list, request) {
+  const loader = createSolveLoader(request);
+  const images = [...document.querySelectorAll("[data-solve-image]")];
+  const queue = image => queueSolveImage(loader, image, list.find(drawing => drawing.id === image.dataset.solveImage));
+  if ("IntersectionObserver" in window) {
+    const observer = new IntersectionObserver(entries => entries.forEach(entry => {
+      if (entry.isIntersecting && isSolveLoaderCurrent(loader)) {
+        observer.unobserve(entry.target);
+        queue(entry.target);
+      }
+    }), { rootMargin: "240px" });
+    state.solveObserver = observer;
+    images.forEach(image => observer.observe(image));
+  } else images.forEach(queue);
+  return loader;
 }
 async function updateDrawing(drawingId) {
   const optimized = await optimizeCanvasImages(state.canvas);

@@ -42,7 +42,7 @@ function deferred() {
     editImageRequestId: 4, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 7, dirty: true, activeSaveOperationId: 9, publishing: true
   };
-  const cleanup = Function("state", "unlockDrawingScroll", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++);
+  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {});
   cleanup();
   cleanup();
   assert.equal(disconnected, 1, "IntersectionObserver must be disconnected once and cleared");
@@ -118,6 +118,7 @@ function galleryHarness() {
   let current = true;
   const dependencies = {
     state, appEl,
+    cancelSolveImageLoading: () => {},
     beginScreenRequest: () => ({ routeName: "gallery", transitionId: 1, requestId: 1 }),
     isScreenRequestCurrent: () => current,
     isConfigured: () => true,
@@ -201,6 +202,7 @@ function galleryHarness() {
     isConfigured: () => true, loading: () => {}, loadOpenDrawings: async () => [], loadRecentSolverSuccessCount: async () => 0,
     loadDrawingImage: async () => "", openDrawingCard: () => "", emptyHtml: () => "", solverRewardHtml: () => "",
     submitAnswer: () => gate.promise, loadCurrentUser: async () => {}, renderSolve: () => {}, showAnswerSuccessModal: () => {},
+    cancelSolveImageLoading: () => {}, observeSolveImages: () => {},
     showToast: message => toasts.push(message), console: { error: () => {} }
   };
   const names = Object.keys(dependencies);

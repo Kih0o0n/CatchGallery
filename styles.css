@@ -96,6 +96,11 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 .filters { display: flex; gap: 8px; margin: 12px 0 16px; }
 .filters select { padding: 10px; }
 .drawing-card img, .frame-image { display: block; width: 100%; aspect-ratio: 1/1; object-fit: contain; background: white; border-radius: 16px; border: 1px solid var(--line); }
+.solve-image-slot { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 16px; background: white; border: 1px solid var(--line); display: grid; place-items: center; }
+.solve-image-slot img { width: 100%; height: 100%; object-fit: contain; border: 0; border-radius: 0; opacity: 0; transition: opacity .18s ease; }
+.solve-image-slot img.loaded { opacity: 1; }
+.solve-image-slot .image-loading, .solve-image-slot .image-error { position: absolute; color: var(--muted); font-size: 13px; }
+.solve-image-slot .image-error { transform: translateY(-18px); }
 .meta { display: flex; flex-wrap: wrap; gap: 7px; margin: 11px 0; color: var(--muted); font-size: 14px; }
 .badge { border-radius: 999px; padding: 5px 10px; background: #f3eeeb; }
 .badge.open { background: #e5f6ed; color: #237153; }.badge.solved { background: #fff0bd; color: #806214; }.badge.expired { background: #eee8fa; color: #65548a; }.badge.withdrawn { background: #eee; }

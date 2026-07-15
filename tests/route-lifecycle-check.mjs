@@ -96,11 +96,13 @@ function deferred() {
   let image;
   let draws = 0;
   const context = { lineCap: "", lineJoin: "", globalCompositeOperation: "", strokeStyle: "", lineWidth: 0, drawImage: () => draws++ };
-  const canvas = { isConnected: true, getContext: () => context, addEventListener: () => {} };
+  const canvas = { isConnected: true, getContext: () => context, addEventListener: () => {}, removeEventListener: () => {} };
   const state = { route: "draw", canvas: null, ctx: null, history: [], dirty: false, activePointerId: null, editImageRequestId: 0 };
   class TestImage { set src(value) { this.value = value; image = this; } }
-  const setupCanvas = Function("state", "document", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasFromHistory", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${setupCanvasSource}; return setupCanvas;`)(
-    state, { querySelector: selector => selector === "#drawingCanvas" ? canvas : { value: 9 } }, () => {}, () => {}, () => {}, () => {}, () => { state.historyBaseCanvas = canvas; state.historyBaseContext = context; }, () => ({ x: 0, y: 0 }), () => {}, () => {}, () => {}, TestImage, 1, () => true, { warn: () => {} }
+  const eventTarget = { addEventListener: () => {}, removeEventListener: () => {} };
+  const document = { ...eventTarget, visibilityState: "visible", querySelector: selector => selector === "#drawingCanvas" ? canvas : { value: 9 } };
+  const setupCanvas = Function("state", "document", "window", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${setupCanvasSource}; return setupCanvas;`)(
+    state, document, eventTarget, () => {}, () => {}, () => {}, () => {}, () => { state.historyBaseCanvas = canvas; state.historyBaseContext = context; }, () => ({ x: 0, y: 0 }), () => {}, () => {}, () => {}, () => {}, () => true, () => true, () => false, TestImage, 1, () => true, { warn: () => {} }
   );
   setupCanvas("data:image/png;base64,x");
   state.canvas = { isConnected: true };

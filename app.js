@@ -1288,7 +1288,7 @@ function expireOldDrawings({ force = false, now = serverNow() } = {}) {
         const d = child.val();
         if (!d.solverId && Number(d.expiresAt) <= now) {
           const fallbackDrawing = d;
-          jobs.push(child.ref.transaction(cur => {
+          jobs.push({ key: child.key, promise: child.ref.transaction(cur => {
             const current = cur || fallbackDrawing;
             if (!current || current.status !== "open" || current.solverId || Number(current.expiresAt) > serverNow()) return;
             const expiredAt = serverNow();
@@ -1296,14 +1296,21 @@ function expireOldDrawings({ force = false, now = serverNow() } = {}) {
           }, (error, committed) => {
             if (error) console.warn("미해결 그림 만료 처리 실패:", child.key, error);
             else if (!committed) console.warn("미해결 그림 만료 처리 미커밋:", child.key);
-          }, false));
+          }, false) });
         }
       });
-      const results = await Promise.all(jobs);
-      const changed = results.some(result => result.committed && result.snapshot.val()?.status === "expired");
+      const settled = await Promise.allSettled(jobs.map(job => job.promise));
+      let failedTransactions = 0;
+      settled.forEach((result, index) => {
+        if (result.status === "rejected") {
+          failedTransactions++;
+          console.warn("미해결 그림 만료 transaction 예외:", jobs[index].key, result.reason);
+        }
+      });
+      const changed = settled.some(result => result.status === "fulfilled" && result.value.committed && result.value.snapshot.val()?.status === "expired");
       if (changed && state.cacheGeneration === generation) invalidateGalleryListsByStatus("expired");
-      if (state.cacheGeneration === generation) state.expirySweepCompletedAt = serverNow();
-      return { snapshot: snap, changed, skipped: false };
+      if (!failedTransactions && state.cacheGeneration === generation) state.expirySweepCompletedAt = serverNow();
+      return { snapshot: snap, changed, skipped: false, failedTransactions };
     } finally {
       if (state.expirySweepPromise === sweepPromise) state.expirySweepPromise = null;
     }

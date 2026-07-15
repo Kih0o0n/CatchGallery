@@ -43,16 +43,17 @@ function makeSnapshot(records = {}, transaction = null) {
 }
 function expiryHarness() {
   let now = 10_000, reads = 0, invalidations = 0;
+  const warnings = [];
   let nextRead = Promise.resolve(makeSnapshot());
   const state = { expirySweepPromise: null, expirySweepCompletedAt: 0, cacheGeneration: 1 };
   const query = { equalTo: value => { assert.equal(value, "open"); return query; }, once: () => { reads++; return nextRead; } };
   const db = { ref: path => { assert.equal(path, "drawings"); return { orderByChild: key => { assert.equal(key, "status"); return query; } }; } };
-  const expireOldDrawings = Function(
+  const api = Function(
     "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "console",
-    `"use strict"; ${pick("expireOldDrawings")}; return expireOldDrawings;`
-  )(state, db, () => now, () => { invalidations++; }, 60_000, { warn() {} });
+    `"use strict"; ${pick("expireOldDrawings")}; ${pick("loadOpenDrawings")}; return { expireOldDrawings, loadOpenDrawings };`
+  )(state, db, () => now, () => { invalidations++; }, 60_000, { warn: (...args) => warnings.push(args) });
   return {
-    state, expireOldDrawings,
+    state, warnings, ...api,
     setNow: value => { now = value; },
     setRead: promise => { nextRead = promise; },
     get reads() { return reads; },
@@ -89,6 +90,58 @@ function expiryHarness() {
   h.setRead(Promise.resolve(makeSnapshot()));
   await h.expireOldDrawings();
   assert.equal(h.reads, 2, "a failed sweep must be retryable");
+}
+
+function transactionSnapshot(outcomes) {
+  const records = Object.fromEntries(Object.keys(outcomes).map((key, index) => [key, { status: "open", solverId: null, expiresAt: 1_000 + index }]));
+  return makeSnapshot(records, async (key, value, update) => {
+    const outcome = outcomes[key];
+    if (outcome === "reject") throw new Error(`transaction failed: ${key}`);
+    const updated = update(value);
+    if (outcome === "uncommitted") return { committed: false, snapshot: { val: () => value } };
+    return { committed: true, snapshot: { val: () => updated } };
+  });
+}
+
+{
+  const h = expiryHarness();
+  const snapshot = transactionSnapshot({ drawingA: "success", drawingB: "reject" });
+  h.setRead(Promise.resolve(snapshot));
+  const result = await h.expireOldDrawings();
+  assert.equal(h.reads, 1);
+  assert.equal(result.snapshot, snapshot, "partial transaction failure must preserve the open snapshot");
+  assert.equal(result.changed, true); assert.equal(result.failedTransactions, 1);
+  assert.equal(h.invalidations, 1, "a successful expiry must invalidate caches despite another rejection");
+  assert.equal(h.state.expirySweepCompletedAt, 0);
+  assert.equal(h.state.expirySweepPromise, null);
+  assert.ok(h.warnings.some(args => args.includes("drawingB")), "rejected transactions must be logged with their drawing ID");
+  h.setRead(Promise.resolve(makeSnapshot()));
+  await h.expireOldDrawings();
+  assert.equal(h.reads, 2, "partial failure must retry without waiting 60 seconds");
+  assert.equal(h.state.expirySweepCompletedAt, 10_000);
+}
+
+{
+  const h = expiryHarness();
+  h.setRead(Promise.resolve(transactionSnapshot({ drawingA: "success", drawingB: "uncommitted" })));
+  const result = await h.expireOldDrawings();
+  assert.equal(result.changed, true); assert.equal(result.failedTransactions, 0);
+  assert.equal(h.invalidations, 1);
+  assert.equal(h.state.expirySweepCompletedAt, 10_000, "uncommitted work does not make an otherwise completed sweep fail");
+  assert.equal(h.state.expirySweepPromise, null);
+}
+
+{
+  const h = expiryHarness();
+  h.setRead(Promise.resolve(transactionSnapshot({ drawingA: "reject", drawingB: "reject" })));
+  const list = await h.loadOpenDrawings("new");
+  assert.deepEqual(list, [], "solve can still filter the returned open snapshot after all transactions reject");
+  assert.equal(h.invalidations, 0); assert.equal(h.state.expirySweepCompletedAt, 0);
+  assert.equal(h.state.expirySweepPromise, null);
+  assert.equal(h.warnings.filter(args => args[0].includes("transaction")).length, 2);
+  h.setRead(Promise.resolve(makeSnapshot()));
+  await h.expireOldDrawings();
+  assert.equal(h.reads, 2, "all rejected transactions must be immediately retryable");
 }
 
 function solveHarness(sort) {

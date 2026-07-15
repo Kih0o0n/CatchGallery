@@ -20,40 +20,66 @@ async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
   const appEl = { innerHTML: "loading" };
   let observed = null;
   let imageReads = 0;
+  let solveSortValue = "new";
+  const submittedHintValues = [];
   const state = { hintUsed: {} };
   const hint = { dataset: { hint: "one", category: "동물", recentSuccesses: "0" }, textContent: "힌트", disabled: false, onclick: null };
   const reward = { innerHTML: "old" };
   const answerButton = { disabled: false, textContent: "정답!" };
-  const answerInput = { value: "", select() {} };
+  const answerInput = { value: "answer", select() {} };
   const form = { dataset: { answerForm: "one" }, onsubmit: null, querySelector: selector => selector === "button" ? answerButton : answerInput };
   const document = {
     querySelectorAll: selector => selector === "[data-hint]" ? [hint] : selector === "[data-answer-form]" ? [form] : [],
     querySelector: selector => selector.includes("data-answer-reward") ? reward : null
   };
-  const openDrawingCard = Function("isOwnDrawing", "formatTime", "escapeHtml", "solverRewardHtml", `${openCardSource}; return openDrawingCard;`)(() => false, () => "1시간", value => value, () => "10점");
+  const rewardHtml = (_recent, usedHint) => `reward-${usedHint}`;
+  const openDrawingCard = Function("state", "isOwnDrawing", "formatTime", "escapeHtml", "solverRewardHtml", `${openCardSource}; return openDrawingCard;`)(state, () => false, () => "1시간", value => value, rewardHtml);
   const dependencies = {
-    state, appEl, sessionStorage: { getItem: () => "new", setItem: () => {} }, solveSort: { onchange: null },
+    state, appEl, sessionStorage: { getItem: () => solveSortValue, setItem: (_key, value) => { solveSortValue = value; } }, solveSort: { value: "new", onchange: null },
     beginScreenRequest: () => ({ routeName: "solve", transitionId: 1, requestId: 1 }), cancelSolveImageLoading: () => {},
     isConfigured: () => true, isScreenRequestCurrent: () => true, loading: () => {},
     loadOpenDrawings: async () => list, loadRecentSolverSuccessCount: async () => 0,
     openDrawingCard, emptyHtml: () => "empty", document,
     observeSolveImages: (items, request) => { observed = { items, request }; },
-    submitAnswer: async () => ({ correct: false }), loadCurrentUser: async () => {}, renderSolve: () => {}, showAnswerSuccessModal: () => {},
-    showToast: () => {}, solverRewardHtml: () => "", console: { error: () => {} },
+    submitAnswer: async (...args) => { submittedHintValues.push(args[2]); return { correct: false, message: "wrong" }; }, loadCurrentUser: async () => {}, showAnswerSuccessModal: () => {},
+    showToast: () => {}, solverRewardHtml: rewardHtml, console: { error: () => {} },
     loadDrawingImage: () => { imageReads++; return new Promise(() => {}); }
   };
   const names = Object.keys(dependencies);
   const renderSolve = Function(...names, `"use strict"; ${renderSolveSource}; return renderSolve;`)(...names.map(name => dependencies[name]));
   await renderSolve();
   assert.match(appEl.innerHTML, /data-solve-image="one"/, "cards must render before image reads finish");
+  assert.match(appEl.innerHTML, /카테고리 힌트 보기 \(-4점\)/);
+  assert.match(appEl.innerHTML, /reward-false/);
   assert.equal(imageReads, 0, "renderSolve must not eagerly read images");
   assert.deepEqual(observed.items, list);
   hint.onclick();
   assert.equal(state.hintUsed.one, true);
   assert.equal(hint.textContent, "카테고리: 동물");
   assert.equal(hint.disabled, true);
-  assert.equal(reward.innerHTML, "");
+  assert.equal(reward.innerHTML, "reward-true");
   assert.equal(typeof form.onsubmit, "function", "answer forms must bind before images finish");
+  await form.onsubmit({ preventDefault() {} });
+  assert.equal(submittedHintValues.at(-1), true, "hint use must reach submitAnswer");
+
+  await renderSolve();
+  assert.match(appEl.innerHTML, /카테고리: 동물/);
+  assert.match(appEl.innerHTML, /data-hint="one"[^>]*disabled/);
+  assert.match(appEl.innerHTML, /reward-true/, "route re-entry restores the hinted reward");
+
+  solveSortValue = "old";
+  await renderSolve();
+  assert.match(appEl.innerHTML, /카테고리: 동물/);
+  assert.match(appEl.innerHTML, /reward-true/, "sort re-render preserves the hinted UI");
+  await form.onsubmit({ preventDefault() {} });
+  assert.equal(submittedHintValues.at(-1), true);
+
+  state.hintUsed = {};
+  await renderSolve();
+  assert.match(appEl.innerHTML, /카테고리 힌트 보기 \(-4점\)/, "a new user session starts without the previous hint");
+  assert.match(appEl.innerHTML, /reward-false/);
+  await form.onsubmit({ preventDefault() {} });
+  assert.equal(submittedHintValues.at(-1), false, "a new user submits without inherited hint use");
 }
 
 function makeSlot(id) {

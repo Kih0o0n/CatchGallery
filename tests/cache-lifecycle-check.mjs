@@ -52,7 +52,8 @@ function sessionHarness() {
   const state = {
     user: { id: "a" }, cacheOwnerUid: null, cacheGeneration: 0,
     thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200),
-    galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), manageDrawings: null
+    galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), manageDrawings: null,
+    hintUsed: {}, editingFeedback: null
   };
   const api = Function("state", `${pick("resetUserSessionCaches")};${pick("setCacheSession")};${pick("isCacheSessionCurrent")}; return { resetUserSessionCaches, setCacheSession, isCacheSessionCurrent };`)(state);
   return { state, ...api };
@@ -64,15 +65,41 @@ function sessionHarness() {
   h.state.thumbnailCache.set("image", "thumb"); h.state.detailImageCache.set("image", "detail"); h.state.likeCache.set("image", { liked: true });
   h.state.galleryLists = { "solved:new": [{ id: "image", isLiked: true }] };
   h.state.galleryScroll = { "solved:new": 55 }; h.state.pendingLikes.add("image"); h.state.manageDrawings = [{ id: "image" }];
+  h.state.hintUsed = { drawing: true };
+  h.state.editingFeedback = { id: "feedback-a", content: "사용자 A의 의견" };
   const generation = h.state.cacheGeneration;
   assert.equal(h.setCacheSession("a"), false);
   assert.equal(h.state.cacheGeneration, generation);
   assert.equal(h.state.thumbnailCache.get("image"), "thumb", "same UID profile refresh preserves caches");
+  assert.deepEqual(h.state.hintUsed, { drawing: true }, "same UID preserves hint state");
+  assert.deepEqual(h.state.editingFeedback, { id: "feedback-a", content: "사용자 A의 의견" }, "same UID preserves feedback editing state");
   assert.equal(h.setCacheSession("b"), true);
   assert.equal(h.state.thumbnailCache.size, 0); assert.equal(h.state.detailImageCache.size, 0); assert.equal(h.state.likeCache.size, 0);
   assert.deepEqual(h.state.galleryLists, {}); assert.deepEqual(h.state.galleryScroll, {}); assert.equal(h.state.pendingLikes.size, 0); assert.equal(h.state.manageDrawings, null);
+  assert.deepEqual(h.state.hintUsed, {}); assert.equal(h.state.editingFeedback, null);
+  h.state.hintUsed = { drawing: true }; h.state.editingFeedback = { id: "feedback-b", content: "사용자 B의 의견" };
   assert.equal(h.setCacheSession(null), true);
+  assert.deepEqual(h.state.hintUsed, {}); assert.equal(h.state.editingFeedback, null);
   assert.equal(h.setCacheSession(null), false, "repeated logout cleanup is safe");
+  assert.deepEqual(h.state.hintUsed, {}); assert.equal(h.state.editingFeedback, null);
+}
+
+{
+  const h = sessionHarness(); h.setCacheSession("a");
+  h.state.editingFeedback = { id: "feedback-a", content: "사용자 A의 의견" };
+  h.state.user = { id: "b" }; h.setCacheSession("b");
+  const appEl = { innerHTML: "" };
+  const renderFeedback = Function(
+    "state", "beginScreenRequest", "loading", "loadFeedback", "isScreenRequestCurrent", "appEl", "FEEDBACK_SORTS", "escapeHtml", "emptyHtml", "feedbackCard", "bindFeedback", "console",
+    `${pickAsync("renderFeedback")}; return renderFeedback;`
+  )(
+    h.state, () => ({ routeName: "feedback", transitionId: 1, requestId: 1 }), () => {}, async () => [], () => true,
+    appEl, ["new"], value => String(value), () => "empty", () => "", () => {}, { error() {} }
+  );
+  await renderFeedback();
+  assert.doesNotMatch(appEl.innerHTML, /사용자 A의 의견/);
+  assert.match(appEl.innerHTML, /보내기/);
+  assert.doesNotMatch(appEl.innerHTML, /수정 저장/);
 }
 
 {
@@ -151,6 +178,19 @@ function cacheState() {
   await assert.rejects(adminDeleteDrawing("drawing"));
   assert.equal(invalidations, 0, "failed/uncommitted deletion preserves caches");
   assert.ok(state.galleryLists["solved:new"]); assert.equal(state.pendingLikes.has("drawing"), true);
+}
+
+{
+  const state = cacheState(); let invalidations = 0;
+  state.isAdmin = true; state.user = { id: "admin" };
+  state.thumbnailCache.set("drawing", "thumb"); state.detailImageCache.set("drawing", "detail"); state.likeCache.set("drawing", { liked: true });
+  const db = { ref: () => ({ once: async () => ({ val: () => ({ id: "drawing", status: "solved" }) }), transaction: async () => { throw new Error("transaction failed"); } }) };
+  const adminDeleteDrawing = Function("state", "db", "serverNow", "invalidateDrawingCachesAfterAdminDelete", `${pickAsync("adminDeleteDrawing")}; return adminDeleteDrawing;`)(state, db, () => 1, () => { invalidations++; });
+  await assert.rejects(adminDeleteDrawing("drawing"), /transaction failed/);
+  assert.equal(invalidations, 0, "transaction exceptions must not invalidate caches");
+  assert.ok(state.galleryLists["solved:new"]); assert.equal(state.thumbnailCache.get("drawing"), "thumb");
+  assert.equal(state.detailImageCache.get("drawing"), "detail"); assert.deepEqual(state.likeCache.get("drawing"), { liked: true });
+  assert.equal(state.pendingLikes.has("drawing"), true);
 }
 
 {

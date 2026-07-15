@@ -374,6 +374,8 @@ function resetUserSessionCaches() {
   state.galleryScroll = {};
   state.pendingLikes.clear();
   state.manageDrawings = null;
+  state.hintUsed = {};
+  state.editingFeedback = null;
 }
 function setCacheSession(uid) {
   const nextUid = uid || null;
@@ -1297,6 +1299,7 @@ async function renderSolve() {
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
+      if (button.disabled) return;
       state.hintUsed[button.dataset.hint] = true;
       button.textContent = `카테고리: ${button.dataset.category}`;
       button.disabled = true;
@@ -1346,7 +1349,8 @@ async function renderSolve() {
 }
 function openDrawingCard(d, recentSuccesses = 0) {
   const mine = isOwnDrawing(d);
-  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}">카테고리 힌트 보기 (-4점)</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, false)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+  const usedHint = !!state.hintUsed[d.id];
+  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}" ${usedHint ? "disabled" : ""}>${usedHint ? `카테고리: ${escapeHtml(d.category)}` : "카테고리 힌트 보기 (-4점)"}</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, usedHint)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 function cancelSolveImageLoading() {
   state.solveObserver?.disconnect();

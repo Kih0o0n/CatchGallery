@@ -12,7 +12,7 @@ assert.match(app, /async function optimizeCanvasImages\(/);
 assert.match(app, /data:image\/webp/);
 assert.match(app, /drawingImages\/\$\{id\}\/imageData/);
 assert.match(app, /drawingThumbnails\/\$\{id\}\/imageData/);
-assert.doesNotMatch(app.match(/async function publishDrawing\(\)[\s\S]*?async function expireOldDrawings/)[0], /imageData:\s*state\.canvas/);
+assert.doesNotMatch(app.match(/async function publishDrawing\(\)[\s\S]*?function expireOldDrawings/)[0], /imageData:\s*state\.canvas/);
 assert.match(app, /imageReady:\s*false/);
 assert.match(app, /IntersectionObserver/);
 assert.match(app, /maxConcurrentLoads:\s*3/);

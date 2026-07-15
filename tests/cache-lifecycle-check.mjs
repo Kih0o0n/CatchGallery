@@ -53,7 +53,8 @@ function sessionHarness() {
     user: { id: "a" }, cacheOwnerUid: null, cacheGeneration: 0,
     thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200),
     galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), manageDrawings: null,
-    hintUsed: {}, editingFeedback: null
+    galleryMetadata: {}, galleryMetadataPromises: {}, hintUsed: {}, editingFeedback: null,
+    expirySweepPromise: null, expirySweepCompletedAt: 0, rankingSnapshot: null, rankingSnapshotPromise: null
   };
   const api = Function("state", `${pick("resetUserSessionCaches")};${pick("setCacheSession")};${pick("isCacheSessionCurrent")}; return { resetUserSessionCaches, setCacheSession, isCacheSessionCurrent };`)(state);
   return { state, ...api };
@@ -67,15 +68,23 @@ function sessionHarness() {
   h.state.galleryScroll = { "solved:new": 55 }; h.state.pendingLikes.add("image"); h.state.manageDrawings = [{ id: "image" }];
   h.state.hintUsed = { drawing: true };
   h.state.editingFeedback = { id: "feedback-a", content: "사용자 A의 의견" };
+  h.state.galleryMetadata = { solved: [{ id: "image" }] };
+  h.state.expirySweepPromise = Promise.resolve({}); h.state.expirySweepCompletedAt = 123;
+  h.state.rankingSnapshot = [{ id: "a" }]; h.state.rankingSnapshotPromise = Promise.resolve([]);
   const generation = h.state.cacheGeneration;
   assert.equal(h.setCacheSession("a"), false);
   assert.equal(h.state.cacheGeneration, generation);
   assert.equal(h.state.thumbnailCache.get("image"), "thumb", "same UID profile refresh preserves caches");
   assert.deepEqual(h.state.hintUsed, { drawing: true }, "same UID preserves hint state");
   assert.deepEqual(h.state.editingFeedback, { id: "feedback-a", content: "사용자 A의 의견" }, "same UID preserves feedback editing state");
+  assert.deepEqual(h.state.galleryMetadata, { solved: [{ id: "image" }] }, "same UID preserves gallery metadata");
+  assert.deepEqual(h.state.rankingSnapshot, [{ id: "a" }], "same UID preserves ranking snapshot");
   assert.equal(h.setCacheSession("b"), true);
   assert.equal(h.state.thumbnailCache.size, 0); assert.equal(h.state.detailImageCache.size, 0); assert.equal(h.state.likeCache.size, 0);
   assert.deepEqual(h.state.galleryLists, {}); assert.deepEqual(h.state.galleryScroll, {}); assert.equal(h.state.pendingLikes.size, 0); assert.equal(h.state.manageDrawings, null);
+  assert.deepEqual(h.state.galleryMetadata, {}); assert.deepEqual(h.state.galleryMetadataPromises, {});
+  assert.equal(h.state.expirySweepPromise, null); assert.equal(h.state.expirySweepCompletedAt, 0);
+  assert.equal(h.state.rankingSnapshot, null); assert.equal(h.state.rankingSnapshotPromise, null);
   assert.deepEqual(h.state.hintUsed, {}); assert.equal(h.state.editingFeedback, null);
   h.state.hintUsed = { drawing: true }; h.state.editingFeedback = { id: "feedback-b", content: "사용자 B의 의견" };
   assert.equal(h.setCacheSession(null), true);

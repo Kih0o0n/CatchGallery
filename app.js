@@ -241,6 +241,7 @@ const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
 const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
 const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200 };
+const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
 const DRAWING_HISTORY_LIMIT = 15;
 const DRAWING_COLORS = [
   ["#3e3a48", "검정색"], ["#ed5f72", "빨간색"], ["#f29b38", "주황색"], ["#f0cf3a", "노란색"],
@@ -292,6 +293,8 @@ const state = {
   gallerySort: "new",
   galleryIndex: 0,
   galleryLists: {},
+  galleryMetadata: {},
+  galleryMetadataPromises: {},
   galleryScroll: {},
   thumbnailCache: new LimitedLruCache(CACHE_LIMITS.thumbnails),
   detailImageCache: new LimitedLruCache(CACHE_LIMITS.details),
@@ -311,6 +314,10 @@ const state = {
   migrationRunning: false,
   manageStatus: "open",
   rankingType: "total",
+  rankingSnapshot: null,
+  rankingSnapshotPromise: null,
+  expirySweepPromise: null,
+  expirySweepCompletedAt: 0,
   editDrawing: null,
   canvas: null,
   ctx: null,
@@ -365,17 +372,25 @@ function invalidateGalleryListsByStatus(status) {
   for (const key of Object.keys(state.galleryLists)) {
     if (key.startsWith(prefix)) delete state.galleryLists[key];
   }
+  if (state.galleryMetadata) delete state.galleryMetadata[status];
+  if (state.galleryMetadataPromises) delete state.galleryMetadataPromises[status];
 }
 function resetUserSessionCaches() {
   state.thumbnailCache.clear();
   state.detailImageCache.clear();
   state.likeCache.clear();
   state.galleryLists = {};
+  state.galleryMetadata = {};
+  state.galleryMetadataPromises = {};
   state.galleryScroll = {};
   state.pendingLikes.clear();
   state.manageDrawings = null;
   state.hintUsed = {};
   state.editingFeedback = null;
+  state.expirySweepPromise = null;
+  state.expirySweepCompletedAt = 0;
+  state.rankingSnapshot = null;
+  state.rankingSnapshotPromise = null;
 }
 function setCacheSession(uid) {
   const nextUid = uid || null;
@@ -563,6 +578,10 @@ function cleanupScreenResources() {
 function transitionRoute(name, { historyMode = "push", historyState = null, renderOptions = {} } = {}) {
   const previousRoute = state.route;
   cleanupScreenResources();
+  if (previousRoute === "ranking" && name !== "ranking") {
+    state.rankingSnapshot = null;
+    state.rankingSnapshotPromise = null;
+  }
   routeTransitionId++;
   if (name === "gallery") {
     const detail = historyState?.galleryDetail === true;
@@ -1253,33 +1272,48 @@ async function publishDrawing() {
   }
   return { id, imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
 }
-async function expireOldDrawings() {
-  if (!db) return;
-  const snap = await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
-  const jobs = [];
-  snap.forEach(child => {
-    const d = child.val();
-    if (!d.solverId && Number(d.expiresAt) <= serverNow()) {
-      const fallbackDrawing = d;
-      jobs.push(child.ref.transaction(cur => {
-        const current = cur || fallbackDrawing;
-        if (!current || current.status !== "open" || current.solverId || Number(current.expiresAt) > serverNow()) return;
-        const expiredAt = serverNow();
-        return { ...current, status: "expired", expiredAt, updatedAt: expiredAt };
-      }, (error, committed) => {
-        if (error) console.warn("미해결 그림 만료 처리 실패:", child.key, error);
-        else if (!committed) console.warn("미해결 그림 만료 처리 미커밋:", child.key);
-      }, false));
-    }
-  });
-  const results = await Promise.all(jobs);
-  if (results.some(result => result.committed && result.snapshot.val()?.status === "expired")) {
-    invalidateGalleryListsByStatus("expired");
+function expireOldDrawings({ force = false, now = serverNow() } = {}) {
+  if (!db) return Promise.resolve({ snapshot: null, changed: false, skipped: true });
+  if (state.expirySweepPromise) return state.expirySweepPromise;
+  if (!force && state.expirySweepCompletedAt && now - state.expirySweepCompletedAt < EXPIRY_SWEEP_INTERVAL_MS) {
+    return Promise.resolve({ snapshot: null, changed: false, skipped: true });
   }
+  const generation = state.cacheGeneration;
+  let sweepPromise;
+  sweepPromise = (async () => {
+    try {
+      const snap = await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
+      const jobs = [];
+      snap.forEach(child => {
+        const d = child.val();
+        if (!d.solverId && Number(d.expiresAt) <= now) {
+          const fallbackDrawing = d;
+          jobs.push(child.ref.transaction(cur => {
+            const current = cur || fallbackDrawing;
+            if (!current || current.status !== "open" || current.solverId || Number(current.expiresAt) > serverNow()) return;
+            const expiredAt = serverNow();
+            return { ...current, status: "expired", expiredAt, updatedAt: expiredAt };
+          }, (error, committed) => {
+            if (error) console.warn("미해결 그림 만료 처리 실패:", child.key, error);
+            else if (!committed) console.warn("미해결 그림 만료 처리 미커밋:", child.key);
+          }, false));
+        }
+      });
+      const results = await Promise.all(jobs);
+      const changed = results.some(result => result.committed && result.snapshot.val()?.status === "expired");
+      if (changed && state.cacheGeneration === generation) invalidateGalleryListsByStatus("expired");
+      if (state.cacheGeneration === generation) state.expirySweepCompletedAt = serverNow();
+      return { snapshot: snap, changed, skipped: false };
+    } finally {
+      if (state.expirySweepPromise === sweepPromise) state.expirySweepPromise = null;
+    }
+  })();
+  state.expirySweepPromise = sweepPromise;
+  return sweepPromise;
 }
 async function loadOpenDrawings(sort = "new") {
-  await expireOldDrawings();
-  const snap = await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
+  const sweep = await expireOldDrawings();
+  const snap = sweep.snapshot || await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
@@ -1492,17 +1526,33 @@ async function withdrawDrawing(drawingId) {
   }, null, false);
   if (!result.committed) throw new Error("회수할 수 없는 그림이에요.");
 }
+async function loadGalleryMetadata(status) {
+  if (state.galleryMetadata[status]) return state.galleryMetadata[status];
+  if (state.galleryMetadataPromises[status]) return state.galleryMetadataPromises[status];
+  let metadataPromise;
+  metadataPromise = (async () => {
+    try {
+      const snap = await db.ref("drawings").orderByChild("status").equalTo(status).once("value");
+      const list = [];
+      snap.forEach(child => {
+        const d = child.val() || {};
+        if (d.imageReady === false) return;
+        const cachedLike = state.likeCache.get(child.key);
+        list.push({ ...d, likeCount: cachedLike?.count ?? (Number(d.likeCount) || 0), isLiked: cachedLike?.liked ?? false, id: child.key });
+      });
+      if (state.galleryMetadataPromises[status] === metadataPromise) state.galleryMetadata[status] = list;
+      return list;
+    } finally {
+      if (state.galleryMetadataPromises[status] === metadataPromise) delete state.galleryMetadataPromises[status];
+    }
+  })();
+  state.galleryMetadataPromises[status] = metadataPromise;
+  return metadataPromise;
+}
 async function loadGalleryDrawings(status = state.galleryTab, sort = state.gallerySort) {
   const started = performance.now();
   await expireOldDrawings();
-  const snap = await db.ref("drawings").orderByChild("status").equalTo(status).once("value");
-  const list = [];
-  snap.forEach(child => {
-    const d = child.val() || {};
-    if (d.imageReady === false) return;
-    const cachedLike = state.likeCache.get(child.key);
-    list.push({ ...d, likeCount: cachedLike?.count ?? (Number(d.likeCount) || 0), isLiked: cachedLike?.liked ?? false, id: child.key });
-  });
+  const list = await loadGalleryMetadata(status);
   if (sort === "popular") {
     await Promise.all(list.map(async drawing => {
       const like = await ensureLikeState(drawing.id);
@@ -1510,7 +1560,7 @@ async function loadGalleryDrawings(status = state.galleryTab, sort = state.galle
     }));
   }
   const timeKey = status === "solved" ? "solvedAt" : "expiredAt";
-  const sorted = list.sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
+  const sorted = [...list].sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
   console.info(`[gallery] metadata ${Math.round(performance.now() - started)}ms · ${sorted.length}개`);
   return sorted;
 }
@@ -1519,7 +1569,7 @@ async function renderGallery(force = false) {
   const request = beginScreenRequest("gallery");
   if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   const key = galleryListKey();
-  if (force) delete state.galleryLists[key];
+  if (force) invalidateGalleryListsByStatus(state.galleryTab);
   const cacheHit = !!state.galleryLists[key];
   if (!state.galleryLists[key]) loading(request);
   try {
@@ -1703,6 +1753,10 @@ async function ensureLikeState(id) {
     const drawing = list.find(item => item.id === id);
     if (drawing) Object.assign(drawing, { likeCount: value.count, isLiked: value.liked });
   }
+  for (const list of Object.values(state.galleryMetadata || {})) {
+    const drawing = list.find(item => item.id === id);
+    if (drawing) Object.assign(drawing, { likeCount: value.count, isLiked: value.liked });
+  }
   return value;
 }
 function syncGalleryLike(id) {
@@ -1847,27 +1901,63 @@ async function runMigrationBatch(root) {
   }
 }
 
-async function loadRanking(type = state.rankingType) {
-  const [usersSnap, claimsSnap, drawingsSnap] = await Promise.all([db.ref("users").once("value"), db.ref("scoreClaims").once("value"), db.ref("drawings").once("value")]);
-  const claims = safeObject(claimsSnap.val());
-  const drawings = safeObject(drawingsSnap.val());
-  const list = [];
+function hasLegacyRankingClaims(claims) {
+  return Object.values(safeObject(claims)).some(userClaims => Object.values(safeObject(userClaims)).some(claim =>
+    !claim || typeof claim !== "object" || !["drawer", "solver"].includes(claim.type)
+  ));
+}
+function buildRankingSnapshot(usersSnap, claims, drawings = {}) {
+  const snapshot = [];
   usersSnap.forEach(child => {
-    const u = child.val();
+    const u = child.val() || {};
     const nickname = u.nickname || u.displayName || "";
     if (u.rankingDeleted || nickname.toLowerCase() === "admin") return;
-    let score = 0;
+    const scores = { total: 0, drawer: 0, solver: 0 };
     for (const [drawingId, claim] of Object.entries(safeObject(claims[child.key]))) {
       const inferredType = claimType(claim, drawings[drawingId], child.key);
-      if (type === "total" || inferredType === type) score += claimScore(claim);
+      const score = claimScore(claim);
+      scores.total += score;
+      if (inferredType) scores[inferredType] += score;
     }
-    list.push({ id: child.key, ...u, nickname, score });
+    snapshot.push({ id: child.key, ...u, nickname, scores });
   });
-  return list.sort((a, b) => (b.score || 0) - (a.score || 0) || a.createdAt - b.createdAt).slice(0, 30);
+  return snapshot;
+}
+function rankingListFromSnapshot(snapshot, type = state.rankingType) {
+  return snapshot.map(user => ({ ...user, score: user.scores[type] || 0 }))
+    .sort((a, b) => (b.score || 0) - (a.score || 0) || a.createdAt - b.createdAt)
+    .slice(0, 30);
+}
+function loadRankingSnapshot() {
+  if (state.rankingSnapshot) return Promise.resolve(state.rankingSnapshot);
+  if (state.rankingSnapshotPromise) return state.rankingSnapshotPromise;
+  const userId = state.user?.id;
+  const generation = state.cacheGeneration;
+  if (!userId) return Promise.resolve([]);
+  let snapshotPromise;
+  snapshotPromise = (async () => {
+    try {
+      const [usersSnap, claimsSnap] = await Promise.all([db.ref("users").once("value"), db.ref("scoreClaims").once("value")]);
+      const claims = safeObject(claimsSnap.val());
+      const drawings = hasLegacyRankingClaims(claims) ? safeObject((await db.ref("drawings").once("value")).val()) : {};
+      const snapshot = buildRankingSnapshot(usersSnap, claims, drawings);
+      if (state.route === "ranking" && isCacheSessionCurrent(userId, generation) && state.rankingSnapshotPromise === snapshotPromise) {
+        state.rankingSnapshot = snapshot;
+      }
+      return snapshot;
+    } finally {
+      if (state.rankingSnapshotPromise === snapshotPromise) state.rankingSnapshotPromise = null;
+    }
+  })();
+  state.rankingSnapshotPromise = snapshotPromise;
+  return snapshotPromise;
+}
+async function loadRanking(type = state.rankingType) {
+  return rankingListFromSnapshot(await loadRankingSnapshot(), type);
 }
 async function renderRanking() {
   const request = beginScreenRequest("ranking");
-  loading(request);
+  if (!state.rankingSnapshot) loading(request);
   try {
     const list = await loadRanking();
     if (!isScreenRequestCurrent(request)) return;
@@ -1967,14 +2057,16 @@ function observeManageImages(list, request) {
   return loader;
 }
 async function loadManageDrawings() {
+  const userId = state.user?.id;
+  if (!userId) return [];
   await expireOldDrawings();
-  const idsSnap = await db.ref(`userDrawings/${state.user.id}`).once("value");
-  const ids = Object.keys(safeObject(idsSnap.val()));
-  const drawings = await Promise.all(ids.map(async id => {
-    const snap = await db.ref(`drawings/${id}`).once("value");
-    return snap.exists() ? { ...(snap.val() || {}), id } : null;
-  }));
-  return drawings.filter(Boolean).sort((a, b) => b.createdAt - a.createdAt);
+  const snap = await db.ref("drawings").orderByChild("drawerId").equalTo(userId).once("value");
+  const drawings = [];
+  snap.forEach(child => {
+    const drawing = child.val() || {};
+    if (drawing.drawerId === userId && drawing.imageReady !== false) drawings.push({ ...drawing, id: child.key });
+  });
+  return drawings.sort((a, b) => b.createdAt - a.createdAt);
 }
 async function loadManageEditDrawing(drawing, button, request) {
   const operationId = ++state.manageEditRequestId;
@@ -2349,6 +2441,10 @@ async function toggleLike(drawingId, cachedDrawing = null) {
   const next = { liked, count: Math.max(0, previous.count + (liked ? 1 : -1)) };
   state.likeCache.set(drawingId, next);
   for (const list of Object.values(state.galleryLists)) {
+    const item = list.find(entry => entry.id === drawingId);
+    if (item) Object.assign(item, { isLiked: next.liked, likeCount: next.count });
+  }
+  for (const list of Object.values(state.galleryMetadata || {})) {
     const item = list.find(entry => entry.id === drawingId);
     if (item) Object.assign(item, { isLiked: next.liked, likeCount: next.count });
   }

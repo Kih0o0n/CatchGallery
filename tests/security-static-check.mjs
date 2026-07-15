@@ -28,7 +28,7 @@ assert.match(styles, /\.gallery-screen \.frame-image[^}]+height:\s*min\(42dvh, 4
 assert.match(app, /function showAnswerSuccessModal\(result\)/, "answer success modal must exist");
 assert.match(app, /정답입니다 🎉/, "answer success modal must show its title");
 assert.match(app, /drawerNickname: drawerName\(d\)/, "answer result must include the drawer name");
-assert.match(app, /function expireOldDrawings\(\)[\s\S]*fallbackDrawing = d/, "expiration must retain a transaction fallback snapshot");
+assert.match(app, /function expireOldDrawings\([^)]*\)[\s\S]*fallbackDrawing = d/, "expiration must retain a transaction fallback snapshot");
 assert.match(app, /status: \"expired\", expiredAt, updatedAt: expiredAt/, "expiration must write expired timestamps");
 assert.match(app, /"학교 \/ 문구"|"전자기기 \/ 기계"/, "expanded prompt categories must be present");
 assert.match(app, /운전기사: "운전기사,기사,기사님"/, "driver answer aliases must be present");

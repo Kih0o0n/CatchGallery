@@ -5,7 +5,7 @@ const app = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const invalidateSource = app.match(/function invalidateGalleryListsByStatus[\s\S]*?(?=function resetUserSessionCaches)/)?.[0];
 const submitSource = app.match(/async function submitAnswer[\s\S]*?(?=async function toggleLike)/)?.[0];
 const gallerySource = app.match(/function galleryListKey[\s\S]*?(?=async function adminDeleteDrawing)/)?.[0];
-const expireSource = app.match(/async function expireOldDrawings[\s\S]*?(?=async function loadOpenDrawings)/)?.[0];
+const expireSource = app.match(/function expireOldDrawings[\s\S]*?(?=async function loadOpenDrawings)/)?.[0];
 assert.ok(invalidateSource && submitSource && gallerySource && expireSource, "v1.1.3 sources must be readable");
 
 function cacheState() {
@@ -19,6 +19,11 @@ function cacheState() {
       "expired:popular": ["expired-popular"],
       "open:new": ["open"]
     },
+    galleryMetadata: { solved: ["solved-metadata"], expired: ["expired-metadata"] },
+    galleryMetadataPromises: {},
+    expirySweepPromise: null,
+    expirySweepCompletedAt: 0,
+    cacheGeneration: 0,
     thumbnailCache: new Map([["drawing", "thumbnail"]]),
     detailImageCache: new Map([["drawing", "detail"]]),
     likeCache: new Map([["drawing", { count: 1, liked: true }]])
@@ -39,6 +44,8 @@ function invalidator(state) {
   assert.deepEqual(state.galleryLists["expired:old"], ["expired-old"]);
   assert.deepEqual(state.galleryLists["expired:popular"], ["expired-popular"]);
   assert.deepEqual(state.galleryLists["open:new"], ["open"]);
+  assert.equal(state.galleryMetadata.solved, undefined);
+  assert.deepEqual(state.galleryMetadata.expired, ["expired-metadata"]);
   assert.equal(state.thumbnailCache.get("drawing"), "thumbnail");
   assert.equal(state.detailImageCache.get("drawing"), "detail");
   assert.deepEqual(state.likeCache.get("drawing"), { count: 1, liked: true });
@@ -153,6 +160,7 @@ for (const scenario of [
     scrollTo: () => {},
     emptyHtml: () => ""
   };
+  dependencies.invalidateGalleryListsByStatus = invalidator(state);
   const names = Object.keys(dependencies);
   const renderGallery = Function(...names, `"use strict"; ${gallerySource}; return renderGallery;`)(...names.map(name => dependencies[name]));
   const invalidate = invalidator(state);
@@ -183,8 +191,8 @@ async function runExpiration({ expired }) {
   const query = { equalTo: () => query, once: async () => snapshot };
   const db = { ref: () => ({ orderByChild: () => query }) };
   const invalidateGalleryListsByStatus = status => { invalidations.push(status); invalidator(state)(status); };
-  const expireOldDrawings = Function("db", "serverNow", "invalidateGalleryListsByStatus", `"use strict"; ${expireSource}; return expireOldDrawings;`)(db, () => 2_000, invalidateGalleryListsByStatus);
-  await expireOldDrawings();
+  const expireOldDrawings = Function("state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "console", `"use strict"; ${expireSource}; return expireOldDrawings;`)(state, db, () => 2_000, invalidateGalleryListsByStatus, 60_000, { warn() {} });
+  await expireOldDrawings({ force: true });
   return { state, invalidations };
 }
 

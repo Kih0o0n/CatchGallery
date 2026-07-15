@@ -16,9 +16,9 @@ assert.doesNotMatch(app.match(/async function publishDrawing\(\)[\s\S]*?async fu
 assert.match(app, /imageReady:\s*false/);
 assert.match(app, /IntersectionObserver/);
 assert.match(app, /maxConcurrentLoads:\s*3/);
-assert.match(app, /thumbnailCache:\s*new Map/);
-assert.match(app, /detailImageCache:\s*new Map/);
-assert.match(app, /likeCache:\s*new Map/);
+assert.match(app, /thumbnailCache:\s*new LimitedLruCache\(CACHE_LIMITS\.thumbnails\)/);
+assert.match(app, /detailImageCache:\s*new LimitedLruCache\(CACHE_LIMITS\.details\)/);
+assert.match(app, /likeCache:\s*new LimitedLruCache\(CACHE_LIMITS\.likes\)/);
 assert.doesNotMatch(app.match(/async function loadGalleryDrawings[\s\S]*?async function renderGallery/)[0], /db\.ref\("drawingLikes"\)/);
 assert.match(app, /data-open-migration/);
 assert.match(app, /migrationBatch:\s*2/);

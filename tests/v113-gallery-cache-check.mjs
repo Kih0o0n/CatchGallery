@@ -2,7 +2,7 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 
 const app = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
-const invalidateSource = app.match(/function invalidateGalleryListsByStatus[\s\S]*?(?=function showToast)/)?.[0];
+const invalidateSource = app.match(/function invalidateGalleryListsByStatus[\s\S]*?(?=function resetUserSessionCaches)/)?.[0];
 const submitSource = app.match(/async function submitAnswer[\s\S]*?(?=async function toggleLike)/)?.[0];
 const gallerySource = app.match(/function galleryListKey[\s\S]*?(?=async function adminDeleteDrawing)/)?.[0];
 const expireSource = app.match(/async function expireOldDrawings[\s\S]*?(?=async function loadOpenDrawings)/)?.[0];

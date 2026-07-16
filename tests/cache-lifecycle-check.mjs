@@ -54,7 +54,8 @@ function sessionHarness() {
     thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200),
     galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), manageDrawings: null,
     galleryMetadata: {}, galleryMetadataPromises: {}, hintUsed: {}, editingFeedback: null,
-    expirySweepPromise: null, expirySweepCompletedAt: 0, rankingSnapshot: null, rankingSnapshotPromise: null
+    expirySweepPromise: null, expirySweepCompletedAt: 0, rankingSnapshot: null, rankingSnapshotPromise: null,
+    feedbackSnapshot: null, feedbackSnapshotPromise: null, feedbackBodyCache: new LimitedLruCache(40), feedbackBodyPromises: new Map(), feedbackPending: new Map()
   };
   const api = Function("state", `${pick("resetUserSessionCaches")};${pick("setCacheSession")};${pick("isCacheSessionCurrent")}; return { resetUserSessionCaches, setCacheSession, isCacheSessionCurrent };`)(state);
   return { state, ...api };
@@ -71,6 +72,8 @@ function sessionHarness() {
   h.state.galleryMetadata = { solved: [{ id: "image" }] };
   h.state.expirySweepPromise = Promise.resolve({}); h.state.expirySweepCompletedAt = 123;
   h.state.rankingSnapshot = [{ id: "a" }]; h.state.rankingSnapshotPromise = Promise.resolve([]);
+  h.state.feedbackSnapshot = { uid: "a" }; h.state.feedbackSnapshotPromise = { promise: Promise.resolve([]) };
+  h.state.feedbackBodyCache.set("feedback-a", { content: "cached" }); h.state.feedbackBodyPromises.set("feedback-a", {}); h.state.feedbackPending.set("edit:feedback-a", {});
   const generation = h.state.cacheGeneration;
   assert.equal(h.setCacheSession("a"), false);
   assert.equal(h.state.cacheGeneration, generation);
@@ -85,6 +88,8 @@ function sessionHarness() {
   assert.deepEqual(h.state.galleryMetadata, {}); assert.deepEqual(h.state.galleryMetadataPromises, {});
   assert.equal(h.state.expirySweepPromise, null); assert.equal(h.state.expirySweepCompletedAt, 0);
   assert.equal(h.state.rankingSnapshot, null); assert.equal(h.state.rankingSnapshotPromise, null);
+  assert.equal(h.state.feedbackSnapshot, null); assert.equal(h.state.feedbackSnapshotPromise, null);
+  assert.equal(h.state.feedbackBodyCache.size, 0); assert.equal(h.state.feedbackBodyPromises.size, 0); assert.equal(h.state.feedbackPending.size, 0);
   assert.deepEqual(h.state.hintUsed, {}); assert.equal(h.state.editingFeedback, null);
   h.state.hintUsed = { drawing: true }; h.state.editingFeedback = { id: "feedback-b", content: "사용자 B의 의견" };
   assert.equal(h.setCacheSession(null), true);
@@ -99,11 +104,11 @@ function sessionHarness() {
   h.state.user = { id: "b" }; h.setCacheSession("b");
   const appEl = { innerHTML: "" };
   const renderFeedback = Function(
-    "state", "beginScreenRequest", "loading", "loadFeedback", "isScreenRequestCurrent", "appEl", "FEEDBACK_SORTS", "escapeHtml", "emptyHtml", "feedbackCard", "bindFeedback", "console",
+    "state", "beginScreenRequest", "loading", "loadFeedback", "isScreenRequestCurrent", "appEl", "FEEDBACK_SORTS", "escapeHtml", "emptyHtml", "feedbackCard", "bindFeedback", "observeFeedbackBodies", "console",
     `${pickAsync("renderFeedback")}; return renderFeedback;`
   )(
     h.state, () => ({ routeName: "feedback", transitionId: 1, requestId: 1 }), () => {}, async () => [], () => true,
-    appEl, ["new"], value => String(value), () => "empty", () => "", () => {}, { error() {} }
+    appEl, ["new"], value => String(value), () => "empty", () => "", () => {}, () => {}, { error() {} }
   );
   await renderFeedback();
   assert.doesNotMatch(appEl.innerHTML, /사용자 A의 의견/);
@@ -214,5 +219,5 @@ function cacheState() {
   assert.deepEqual(invalidated, { id: "drawing", status: "solved" }, "successful transactions invalidate using the previous status");
 }
 
-assert.match(source, /CACHE_LIMITS = \{ thumbnails: 60, details: 12, likes: 200 \}/);
+assert.match(source, /CACHE_LIMITS = \{ thumbnails: 60, details: 12, likes: 200, feedbackBodies: 40 \}/);
 console.log("Cache lifecycle checks passed.");

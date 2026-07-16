@@ -149,7 +149,7 @@
       "$feedbackId": {
         "$uid": {
           ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
-          ".write": "auth != null && auth.uid === $uid && !data.exists() && !data.parent().exists() && !root.child('feedbackMeta').child($feedbackId).exists() && newData.val() === true",
+          ".write": "auth != null && auth.uid === $uid && ((!data.exists() && !data.parent().exists() && !root.child('feedbackMeta').child($feedbackId).exists() && newData.val() === true) || (data.val() === true && !newData.exists() && !root.child('feedbackMeta').child($feedbackId).exists() && !root.child('feedbackContent').child($feedbackId).exists() && !root.child('userFeedback').child($uid).child($feedbackId).exists()))",
           ".validate": "newData.val() === true"
         }
       }
@@ -158,7 +158,7 @@
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         "$feedbackId": {
-          ".write": "auth != null && auth.uid === $uid && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true",
+          ".write": "auth != null && auth.uid === $uid && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && ((newData.val() === true) || (data.val() === true && !newData.exists() && !root.child('feedbackContent').child($feedbackId).exists()))",
           ".validate": "newData.val() === true"
         }
       }
@@ -166,7 +166,7 @@
     "feedbackMeta": {
       ".read": "auth != null",
       "$feedbackId": {
-        ".write": "auth != null && ((!data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && newData.child('status').val() === 'open' && newData.child('hidden').val() === false && newData.child('deleted').val() === false && newData.child('likeCount').val() === 0 && newData.child('dislikeCount').val() === 0 && newData.child('popularityScore').val() === 0) || (data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true) || (data.exists() && root.child('admins').child(auth.uid).val() === true))",
+        ".write": "auth != null && ((!data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && newData.child('status').val() === 'open' && newData.child('hidden').val() === false && newData.child('deleted').val() === false && newData.child('likeCount').val() === 0 && newData.child('dislikeCount').val() === 0 && newData.child('popularityScore').val() === 0) || (data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && (newData.exists() || !root.child('feedbackContent').child($feedbackId).exists())) || (data.exists() && newData.exists() && root.child('admins').child(auth.uid).val() === true))",
         ".validate": "newData.hasChildren(['createdAt','updatedAt','isAnonymous','isSecret','displayAuthor','status','hidden','deleted','likeCount','dislikeCount','popularityScore'])",
         "createdAt": { ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())" },
         "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
@@ -185,7 +185,7 @@
     },
     "feedbackContent": {
       "$feedbackId": {
-        ".read": "auth != null && (root.child('feedbackMeta').child($feedbackId).child('isSecret').val() === false || root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true || root.child('admins').child(auth.uid).val() === true)",
+        ".read": "auth != null && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && (root.child('admins').child(auth.uid).val() === true || (root.child('feedbackMeta').child($feedbackId).child('hidden').val() === false && (root.child('feedbackMeta').child($feedbackId).child('isSecret').val() === false || root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true)))",
         ".write": "auth != null && ((!data.exists() && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && !newData.child('adminReply').exists() && !newData.child('repliedAt').exists() && !newData.child('repliedBy').exists() && !newData.child('repliedByNickname').exists()) || (data.exists() && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() === true && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && newData.child('adminReply').val() === data.child('adminReply').val() && newData.child('repliedAt').val() === data.child('repliedAt').val() && newData.child('repliedBy').val() === data.child('repliedBy').val() && newData.child('repliedByNickname').val() === data.child('repliedByNickname').val()) || (data.exists() && root.child('admins').child(auth.uid).val() === true && newData.child('content').val() === data.child('content').val()))",
         ".validate": "newData.hasChild('content')",
         "content": { ".validate": "newData.isString() && newData.val().length >= 6 && newData.val().length <= 300" },
@@ -200,7 +200,7 @@
       ".read": "auth != null",
       "$feedbackId": {
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() !== true",
+          ".write": "auth != null && auth.uid === $uid && root.child('feedbackMeta').child($feedbackId).exists() && root.child('feedbackMeta').child($feedbackId).child('deleted').val() === false && root.child('feedbackMeta').child($feedbackId).child('hidden').val() === false && root.child('feedbackMeta').child($feedbackId).child('isSecret').val() === false && root.child('feedbackOwners').child($feedbackId).child(auth.uid).val() !== true",
           ".validate": "!newData.exists() || newData.val() === 'like' || newData.val() === 'dislike'"
         }
       }

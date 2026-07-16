@@ -240,7 +240,9 @@ const WORDS = Object.entries({
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
 const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
-const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200 };
+const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200, feedbackBodies: 40 };
+const FEEDBACK_CACHE_TTL_MS = 30_000;
+const FEEDBACK_BODY_CONCURRENCY = 3;
 const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
 const DRAWING_HISTORY_LIMIT = 15;
 const PEN_TOUCH_TAKEOVER_DELAY_MS = 1500;
@@ -353,7 +355,14 @@ const state = {
   drawingPublished: false,
   feedbackView: "all",
   feedbackSort: "new",
-  editingFeedback: null
+  editingFeedback: null,
+  feedbackSnapshot: null,
+  feedbackSnapshotPromise: null,
+  feedbackBodyCache: new LimitedLruCache(CACHE_LIMITS.feedbackBodies),
+  feedbackBodyPromises: new Map(),
+  feedbackPending: new Map(),
+  feedbackObserver: null,
+  feedbackLoader: null
 };
 let routeTransitionId = 0;
 const screenRequestIds = Object.create(null);
@@ -390,6 +399,7 @@ function invalidateGalleryListsByStatus(status) {
   if (state.galleryMetadataPromises) delete state.galleryMetadataPromises[status];
 }
 function resetUserSessionCaches() {
+  if (typeof cancelFeedbackLoading === "function") cancelFeedbackLoading();
   state.thumbnailCache.clear();
   state.detailImageCache.clear();
   state.likeCache.clear();
@@ -401,6 +411,11 @@ function resetUserSessionCaches() {
   state.manageDrawings = null;
   state.hintUsed = {};
   state.editingFeedback = null;
+  state.feedbackSnapshot = null;
+  state.feedbackSnapshotPromise = null;
+  state.feedbackBodyCache?.clear();
+  state.feedbackBodyPromises?.clear();
+  state.feedbackPending?.clear();
   state.expirySweepPromise = null;
   state.expirySweepCompletedAt = 0;
   state.rankingSnapshot = null;
@@ -572,6 +587,7 @@ function isConfigured() {
 function cleanupScreenResources() {
   cancelSolveImageLoading();
   cancelManageImageLoading();
+  cancelFeedbackLoading();
   state.manageDrawings = null;
   state.galleryObserver?.disconnect();
   state.galleryObserver = null;
@@ -2653,48 +2669,38 @@ async function renderManage() {
 function manageCard(d) {
   return `<article class="card drawing-card" data-manage-card="${d.id}"><div class="solve-image-slot manage-image-slot" data-manage-slot="${d.id}">${manageImageMarkup(d.id)}</div><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">정답을 맞히면 그린 사람에게 30점!</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
 }
-async function submitFeedback(content, isAnonymous, isSecret) {
-  content = content.trim();
-  if (content.length <= 5) throw new Error("조금만 더 자세히 적어주세요.");
-  if (content.length > 300) throw new Error("300자 이내로 줄여주세요.");
-  const now = serverNow();
-  const ref = db.ref("feedbackMeta").push();
-  const id = ref.key;
-  const meta = { createdAt: now, updatedAt: now, isAnonymous: !!isAnonymous, isSecret: !!isSecret, displayAuthor: isAnonymous ? "익명" : state.user.nickname, status: "open", hidden: false, deleted: false, likeCount: 0, dislikeCount: 0, popularityScore: 0 };
-  await db.ref(`feedbackOwners/${id}/${state.user.id}`).set(true);
-  try {
-    await db.ref(`userFeedback/${state.user.id}/${id}`).set(true);
-    await db.ref(`feedbackMeta/${id}`).set(meta);
-    await db.ref(`feedbackContent/${id}`).set({ content, adminReply: null, repliedAt: null, repliedBy: null, repliedByNickname: null });
-  } catch (error) {
-    try { await db.ref(`feedbackMeta/${id}`).update({ deleted: true, deletedAt: serverNow(), updatedAt: serverNow() }); } catch (_) {}
-    throw error;
-  }
+function feedbackOperationContext(request = null) {
+  return { uid: state.user?.id || null, generation: state.cacheGeneration, request };
 }
-async function loadFeedback() {
-  const [metaSnap, mySnap, reactionsSnap] = await Promise.all([db.ref("feedbackMeta").once("value"), db.ref(`userFeedback/${state.user.id}`).once("value"), db.ref("feedbackReactions").once("value")]);
-  const mine = safeObject(mySnap.val());
-  const reactions = safeObject(reactionsSnap.val());
-  const items = [];
-  const jobs = [];
-  metaSnap.forEach(child => {
-    const reactionValues = Object.values(safeObject(reactions[child.key]));
-    const likeCount = reactionValues.filter(v => v === "like").length;
-    const dislikeCount = reactionValues.filter(v => v === "dislike").length;
-    const meta = { id: child.key, ...child.val(), likeCount, dislikeCount, popularityScore: likeCount - dislikeCount, isMine: !!mine[child.key], myReaction: safeObject(reactions[child.key])[state.user.id] || null };
-    if (meta.deleted) return;
-    if (state.feedbackView === "mine" && !meta.isMine) return;
-    if (meta.hidden && !state.isAdmin) return;
-    const canRead = !meta.isSecret || meta.isMine || state.isAdmin;
-    jobs.push((async () => {
-      let content = null;
-      if (canRead) {
-        try { content = (await db.ref(`feedbackContent/${meta.id}`).once("value")).val(); } catch (_) { content = null; }
-      }
-      items.push({ ...meta, content });
-    })());
-  });
-  await Promise.all(jobs);
+function isFeedbackContextCurrent(context, requireScreen = false) {
+  return !!context?.uid && isCacheSessionCurrent(context.uid, context.generation) &&
+    (!requireScreen || (state.route === "feedback" && (!context.request || isScreenRequestCurrent(context.request))));
+}
+function feedbackPendingKey(type, id = "global") { return `${type}:${id}`; }
+function beginFeedbackPending(type, id, context) {
+  const key = feedbackPendingKey(type, id);
+  if (!isFeedbackContextCurrent(context) || state.feedbackPending.has(key)) return null;
+  const record = { key, context };
+  state.feedbackPending.set(key, record);
+  return record;
+}
+function endFeedbackPending(record) { if (record && state.feedbackPending.get(record.key) === record) state.feedbackPending.delete(record.key); }
+function feedbackMetaById(id) { return state.feedbackSnapshot?.items?.find(item => item.id === id) || null; }
+function feedbackCanRead(meta, uid = state.user?.id, isAdmin = state.isAdmin) {
+  return !!meta && !meta.deleted && (!meta.hidden || isAdmin) && (!meta.isSecret || meta.isMine || isAdmin) && !!uid;
+}
+function feedbackCanReact(meta) { return !!meta && !meta.deleted && !meta.hidden && !meta.isSecret && !meta.isMine; }
+function recalculateFeedbackReaction(meta, reactions, uid) {
+  const values = Object.values(safeObject(reactions));
+  meta.likeCount = values.filter(value => value === "like").length;
+  meta.dislikeCount = values.filter(value => value === "dislike").length;
+  meta.popularityScore = meta.likeCount - meta.dislikeCount;
+  meta.myReaction = safeObject(reactions)[uid] || null;
+  return meta;
+}
+function feedbackSnapshotList() {
+  const items = state.feedbackSnapshot?.items || [];
+  const visible = items.filter(meta => !meta.deleted && (state.isAdmin || !meta.hidden) && (state.feedbackView !== "mine" || meta.isMine));
   const comparators = {
     new: (a, b) => b.createdAt - a.createdAt,
     old: (a, b) => a.createdAt - b.createdAt,
@@ -2702,40 +2708,236 @@ async function loadFeedback() {
     likes: (a, b) => (b.likeCount || 0) - (a.likeCount || 0),
     dislikes: (a, b) => (b.dislikeCount || 0) - (a.dislikeCount || 0)
   };
-  return items.sort(comparators[state.feedbackSort]);
+  return [...visible].sort(comparators[state.feedbackSort] || comparators.new).map(meta => ({ ...meta, content: state.feedbackBodyCache.get(meta.id) || null }));
 }
-async function updateFeedback(id, content) {
+function loadFeedbackSnapshot(preferCache = false) {
+  const context = feedbackOperationContext();
+  if (!context.uid) throw new Error("로그인이 필요해요.");
+  const cached = state.feedbackSnapshot;
+  if (cached?.uid === context.uid && cached.generation === context.generation && (preferCache || serverNow() - cached.loadedAt < FEEDBACK_CACHE_TTL_MS)) return cached;
+  if (state.feedbackSnapshotPromise?.uid === context.uid && state.feedbackSnapshotPromise.generation === context.generation) return state.feedbackSnapshotPromise.promise;
+  const loadPromise = Promise.all([
+    db.ref("feedbackMeta").once("value"),
+    db.ref(`userFeedback/${context.uid}`).once("value"),
+    db.ref("feedbackReactions").once("value")
+  ]).then(([metaSnap, mySnap, reactionsSnap]) => {
+    const mine = safeObject(mySnap.val());
+    const reactions = safeObject(reactionsSnap.val());
+    const items = [];
+    metaSnap.forEach(child => {
+      const meta = { id: child.key, ...child.val(), isMine: !!mine[child.key] };
+      recalculateFeedbackReaction(meta, safeObject(reactions[child.key]), context.uid);
+      items.push(meta);
+    });
+    const snapshot = { uid: context.uid, generation: context.generation, loadedAt: serverNow(), items, reactions };
+    if (isFeedbackContextCurrent(context)) state.feedbackSnapshot = snapshot;
+    return snapshot;
+  });
+  const record = { uid: context.uid, generation: context.generation, promise: null };
+  const promise = loadPromise.finally(() => { if (state.feedbackSnapshotPromise === record) state.feedbackSnapshotPromise = null; });
+  record.promise = promise;
+  state.feedbackSnapshotPromise = record;
+  return promise;
+}
+async function cleanupIncompleteFeedback(id, uid, context) {
+  if (!isFeedbackContextCurrent(context) || context.uid !== uid) return false;
+  let snapshots;
+  try {
+    snapshots = await Promise.all([
+      db.ref(`feedbackOwners/${id}/${uid}`).once("value"), db.ref(`userFeedback/${uid}/${id}`).once("value"),
+      db.ref(`feedbackMeta/${id}`).once("value"), db.ref(`feedbackContent/${id}`).once("value")
+    ]);
+  } catch (readError) {
+    console.error("의견 작성 cleanup 상태 확인 실패:", readError);
+    return false;
+  }
+  const [ownerSnap, userSnap, metaSnap, contentSnap] = snapshots;
+  if (contentSnap.exists()) return false;
+  let cleaned = true;
+  const remove = async (path, exists) => {
+    if (!exists) return;
+    try { await db.ref(path).remove(); }
+    catch (cleanupError) { cleaned = false; console.error("의견 작성 cleanup 실패:", cleanupError); }
+  };
+  await remove(`feedbackMeta/${id}`, metaSnap.exists());
+  await remove(`userFeedback/${uid}/${id}`, userSnap.exists());
+  await remove(`feedbackOwners/${id}/${uid}`, ownerSnap.val() === true);
+  return cleaned;
+}
+async function submitFeedback(content, isAnonymous, isSecret, context = feedbackOperationContext()) {
   content = content.trim();
   if (content.length <= 5) throw new Error("조금만 더 자세히 적어주세요.");
   if (content.length > 300) throw new Error("300자 이내로 줄여주세요.");
-  const owner = (await db.ref(`feedbackOwners/${id}/${state.user.id}`).once("value")).val() === true;
-  if (!owner) throw new Error("내 의견만 수정할 수 있어요.");
-  await db.ref().update({ [`feedbackContent/${id}/content`]: content, [`feedbackMeta/${id}/updatedAt`]: serverNow() });
+  if (!isFeedbackContextCurrent(context)) throw new Error("로그인 상태가 변경됐어요.");
+  const uid = context.uid;
+  const nickname = state.user.nickname;
+  const now = serverNow();
+  const ref = db.ref("feedbackMeta").push();
+  const id = ref.key;
+  const meta = { createdAt: now, updatedAt: now, isAnonymous: !!isAnonymous, isSecret: !!isSecret, displayAuthor: isAnonymous ? "익명" : nickname, status: "open", hidden: false, deleted: false, likeCount: 0, dislikeCount: 0, popularityScore: 0 };
+  const body = { content, adminReply: null, repliedAt: null, repliedBy: null, repliedByNickname: null };
+  try {
+    await db.ref(`feedbackOwners/${id}/${uid}`).set(true);
+    await db.ref(`userFeedback/${uid}/${id}`).set(true);
+    await db.ref(`feedbackMeta/${id}`).set(meta);
+    await db.ref(`feedbackContent/${id}`).set(body);
+  } catch (error) {
+    await cleanupIncompleteFeedback(id, uid, context);
+    throw error;
+  }
+  if (!isFeedbackContextCurrent(context)) return null;
+  const item = { id, ...meta, isMine: true, myReaction: null };
+  if (state.feedbackSnapshot) state.feedbackSnapshot.items.unshift(item);
+  state.feedbackBodyCache.set(id, body);
+  return item;
 }
-async function deleteFeedback(id) {
-  const owner = (await db.ref(`feedbackOwners/${id}/${state.user.id}`).once("value")).val() === true;
-  if (!owner) throw new Error("내 의견만 삭제할 수 있어요.");
-  await db.ref(`feedbackMeta/${id}`).update({ deleted: true, deletedAt: serverNow(), updatedAt: serverNow() });
+async function loadFeedback(options = {}) {
+  await loadFeedbackSnapshot(options.preferCache === true);
+  return feedbackSnapshotList();
 }
-async function saveAdminReply(id, reply) {
-  if (!state.isAdmin) throw new Error("관리자만 답변할 수 있어요.");
+async function updateFeedback(id, content, context = feedbackOperationContext()) {
+  content = content.trim();
+  if (content.length <= 5) throw new Error("조금만 더 자세히 적어주세요.");
+  if (content.length > 300) throw new Error("300자 이내로 줄여주세요.");
+  const meta = feedbackMetaById(id);
+  if (!meta?.isMine || !isFeedbackContextCurrent(context)) throw new Error("내 의견만 수정할 수 있어요.");
+  const updatedAt = serverNow();
+  await db.ref().update({ [`feedbackContent/${id}/content`]: content, [`feedbackMeta/${id}/updatedAt`]: updatedAt });
+  if (!isFeedbackContextCurrent(context)) return null;
+  meta.updatedAt = updatedAt;
+  state.feedbackBodyCache.set(id, { ...(state.feedbackBodyCache.get(id) || {}), content });
+  return meta;
+}
+async function deleteFeedback(id, context = feedbackOperationContext()) {
+  const meta = feedbackMetaById(id);
+  if (!meta?.isMine || !isFeedbackContextCurrent(context)) throw new Error("내 의견만 삭제할 수 있어요.");
+  const deletedAt = serverNow();
+  await db.ref(`feedbackMeta/${id}`).update({ deleted: true, deletedAt, updatedAt: deletedAt });
+  if (!isFeedbackContextCurrent(context)) return false;
+  meta.deleted = true; meta.deletedAt = deletedAt; meta.updatedAt = deletedAt;
+  state.feedbackBodyCache.delete(id);
+  return true;
+}
+async function saveAdminReply(id, reply, context = feedbackOperationContext()) {
+  if (!state.isAdmin || !isFeedbackContextCurrent(context)) throw new Error("관리자만 답변할 수 있어요.");
   reply = reply.trim();
   if (!reply) throw new Error("답변 내용을 입력해 주세요.");
-  await db.ref().update({ [`feedbackContent/${id}/adminReply`]: reply, [`feedbackContent/${id}/repliedAt`]: serverNow(), [`feedbackContent/${id}/repliedBy`]: state.user.id, [`feedbackContent/${id}/repliedByNickname`]: state.user.nickname, [`feedbackMeta/${id}/status`]: "answered", [`feedbackMeta/${id}/updatedAt`]: serverNow() });
+  if (reply.length > 300) throw new Error("답변은 300자 이내로 적어주세요.");
+  const now = serverNow();
+  const nickname = state.user.nickname;
+  await db.ref().update({ [`feedbackContent/${id}/adminReply`]: reply, [`feedbackContent/${id}/repliedAt`]: now, [`feedbackContent/${id}/repliedBy`]: context.uid, [`feedbackContent/${id}/repliedByNickname`]: nickname, [`feedbackMeta/${id}/status`]: "answered", [`feedbackMeta/${id}/updatedAt`]: now });
+  if (!isFeedbackContextCurrent(context)) return null;
+  const meta = feedbackMetaById(id); if (meta) { meta.status = "answered"; meta.updatedAt = now; }
+  state.feedbackBodyCache.set(id, { ...(state.feedbackBodyCache.get(id) || {}), adminReply: reply, repliedAt: now, repliedBy: context.uid, repliedByNickname: nickname });
+  return meta;
 }
-async function toggleFeedbackHidden(id, hidden) {
-  if (!state.isAdmin) throw new Error("관리자만 관리할 수 있어요.");
-  await db.ref(`feedbackMeta/${id}`).update({ hidden, updatedAt: serverNow() });
+async function toggleFeedbackHidden(id, hidden, context = feedbackOperationContext()) {
+  if (!state.isAdmin || !isFeedbackContextCurrent(context)) throw new Error("관리자만 관리할 수 있어요.");
+  const updatedAt = serverNow();
+  await db.ref(`feedbackMeta/${id}`).update({ hidden, updatedAt });
+  if (!isFeedbackContextCurrent(context)) return null;
+  const meta = feedbackMetaById(id); if (meta) { meta.hidden = !!hidden; meta.updatedAt = updatedAt; }
+  return meta;
 }
-async function renderFeedback() {
+function cancelFeedbackLoading() {
+  state.feedbackObserver?.disconnect();
+  state.feedbackObserver = null;
+  if (state.feedbackLoader) {
+    state.feedbackLoader.cancelled = true;
+    state.feedbackLoader.queue.length = 0;
+    state.feedbackLoader = null;
+  }
+}
+function isFeedbackLoaderCurrent(loader) {
+  return !loader.cancelled && state.feedbackLoader === loader && isScreenRequestCurrent(loader.request) && isFeedbackContextCurrent(loader.context, true);
+}
+function loadFeedbackBody(meta, context) {
+  if (!feedbackCanRead(meta, context.uid, state.isAdmin)) return Promise.resolve(null);
+  if (state.feedbackBodyCache.has(meta.id)) return Promise.resolve(state.feedbackBodyCache.get(meta.id));
+  const existing = state.feedbackBodyPromises.get(meta.id);
+  if (existing?.uid === context.uid && existing.generation === context.generation) return existing.promise;
+  const promise = db.ref(`feedbackContent/${meta.id}`).once("value").then(snapshot => {
+    const content = snapshot.val();
+    if (content && isFeedbackContextCurrent(context)) state.feedbackBodyCache.set(meta.id, content);
+    return content;
+  });
+  const record = { uid: context.uid, generation: context.generation, promise: null };
+  const sharedPromise = promise.finally(() => { if (state.feedbackBodyPromises.get(meta.id) === record) state.feedbackBodyPromises.delete(meta.id); });
+  record.promise = sharedPromise;
+  state.feedbackBodyPromises.set(meta.id, record);
+  return sharedPromise;
+}
+function renderFeedbackBody(slot, item, content) {
+  if (!slot?.isConnected || slot.dataset.feedbackBody !== item.id) return;
+  item.content = content;
+  slot.innerHTML = `<p class="feedback-content">${escapeHtml(content?.content || "")}</p>${content?.adminReply ? `<div class="admin-reply"><b>🛠 운영자 답변</b><p>${escapeHtml(content.adminReply)}</p></div>` : ""}`;
+  const textarea = slot.closest("[data-feedback-id]")?.querySelector(`[data-reply-text="${item.id}"]`);
+  if (textarea) textarea.value = content?.adminReply || "";
+  const article = slot.closest("[data-feedback-id]");
+  const editButton = article?.querySelector("[data-edit-feedback]");
+  if (editButton && !state.feedbackPending.has(feedbackPendingKey("edit", item.id))) editButton.disabled = false;
+  const replyButton = article?.querySelector("[data-admin-reply]");
+  if (replyButton && !state.feedbackPending.has(feedbackPendingKey("reply", item.id))) replyButton.disabled = false;
+}
+function runFeedbackBodyQueue(loader) {
+  while (isFeedbackLoaderCurrent(loader) && loader.active < FEEDBACK_BODY_CONCURRENCY && loader.queue.length) {
+    const task = loader.queue.shift();
+    loader.active++;
+    Promise.resolve(task()).finally(() => {
+      loader.active--;
+      if (isFeedbackLoaderCurrent(loader)) runFeedbackBodyQueue(loader);
+    });
+  }
+}
+function queueFeedbackBody(loader, slot, item) {
+  if (!slot || slot.dataset.queued || !feedbackCanRead(item, loader.context.uid, state.isAdmin) || !isFeedbackLoaderCurrent(loader)) return;
+  slot.dataset.queued = "true";
+  loader.queue.push(async () => {
+    try {
+      const content = await loadFeedbackBody(item, loader.context);
+      if (!isFeedbackLoaderCurrent(loader)) return;
+      renderFeedbackBody(slot, item, content);
+    } catch (_) {
+      if (!isFeedbackLoaderCurrent(loader) || !slot.isConnected) return;
+      slot.innerHTML = `<span class="feedback-content-error">내용을 불러오지 못했어요.</span><button class="button ghost" data-feedback-retry="${item.id}">다시 불러오기</button>`;
+      const retry = slot.querySelector("[data-feedback-retry]");
+      retry.onclick = () => {
+        if (!isFeedbackLoaderCurrent(loader)) return;
+        state.feedbackBodyCache.delete(item.id);
+        state.feedbackBodyPromises.delete(item.id);
+        delete slot.dataset.queued;
+        slot.innerHTML = '<span class="feedback-content-loading">내용을 불러오는 중…</span>';
+        queueFeedbackBody(loader, slot, item);
+      };
+    }
+  });
+  runFeedbackBodyQueue(loader);
+}
+function observeFeedbackBodies(list, request) {
+  cancelFeedbackLoading();
+  const loader = { request, context: feedbackOperationContext(request), queue: [], active: 0, cancelled: false };
+  state.feedbackLoader = loader;
+  const slots = [...document.querySelectorAll("[data-feedback-body]")];
+  const queue = slot => queueFeedbackBody(loader, slot, list.find(item => item.id === slot.dataset.feedbackBody));
+  if ("IntersectionObserver" in window) {
+    state.feedbackObserver = new IntersectionObserver(entries => entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      state.feedbackObserver?.unobserve(entry.target);
+      queue(entry.target);
+    }), { rootMargin: "240px" });
+    slots.forEach(slot => state.feedbackObserver.observe(slot));
+  } else slots.forEach(queue);
+}
+async function renderFeedback(preferCache = false) {
   const request = beginScreenRequest("feedback");
   loading(request);
   try {
-    const list = await loadFeedback();
+    const list = await loadFeedback({ preferCache });
     if (!isScreenRequestCurrent(request)) return;
     const editing = state.editingFeedback;
     appEl.innerHTML = `<section class="screen"><h2>의견 보내기</h2><p class="muted">게임에 바라는 점이나 불편한 점을 남겨주세요.</p><form id="feedbackForm" class="card feedback-form"><textarea id="feedbackText" maxlength="300" placeholder="의견을 적어주세요" required>${editing ? escapeHtml(editing.content) : ""}</textarea>${editing ? "" : `<label class="check-row"><input id="anonymousCheck" type="checkbox"> 익명으로 올리기</label><label class="check-row"><input id="secretCheck" type="checkbox"> 비밀글로 올리기</label>`}<div class="button-row">${editing ? '<button id="cancelFeedbackEdit" class="button ghost" type="button">취소</button>' : ""}<button class="button primary" type="submit">${editing ? "수정 저장" : "보내기"}</button></div></form><div class="feedback-view-tabs"><button data-feedback-view="all" class="${state.feedbackView === "all" ? "active" : ""}">전체 글</button><button data-feedback-view="mine" class="${state.feedbackView === "mine" ? "active" : ""}">내 글</button></div><div class="feedback-sorts">${FEEDBACK_SORTS.map(([key, label]) => `<button data-feedback-sort="${key}" class="${state.feedbackSort === key ? "active" : ""}">${label}</button>`).join("")}</div><div>${list.length ? list.map(feedbackCard).join("") : emptyHtml("", "아직 의견이 없어요.")}</div></section>`;
     bindFeedback(list, request);
+    observeFeedbackBodies(list, request);
   } catch (error) {
     if (!isScreenRequestCurrent(request)) return;
     console.error(error);
@@ -2743,43 +2945,79 @@ async function renderFeedback() {
   }
 }
 function feedbackCard(f) {
-  const secretLocked = f.isSecret && !f.content;
-  const body = secretLocked ? '<div class="secret-feedback">🔒 비밀글입니다.<br><span>운영자와 작성자만 내용을 볼 수 있습니다.</span></div>' : `<p class="feedback-content">${escapeHtml(f.content?.content || "")}</p>`;
-  const reply = f.content?.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : "";
-  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reply}<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${f.id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👍 ${Number(f.likeCount) || 0}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${f.id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${f.isMine ? "disabled" : ""}>👎 ${Number(f.dislikeCount) || 0}</button></div>${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}">수정</button><button class="button danger" data-delete-feedback="${f.id}">삭제</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" placeholder="운영자 답변">${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}">${f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}">${f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
+  const canRead = feedbackCanRead(f);
+  const body = !canRead ? '<div class="secret-feedback">🔒 내용을 볼 수 없는 글입니다.</div>' : f.content ? `<div data-feedback-body="${f.id}"><p class="feedback-content">${escapeHtml(f.content.content || "")}</p>${f.content.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : ""}</div>` : `<div data-feedback-body="${f.id}"><span class="feedback-content-loading">내용을 불러오는 중…</span></div>`;
+  const canReact = feedbackCanReact(f);
+  const reactionPending = state.feedbackPending.has(feedbackPendingKey("reaction", f.id));
+  const editPending = state.feedbackPending.has(feedbackPendingKey("edit", f.id));
+  const deletePending = state.feedbackPending.has(feedbackPendingKey("delete", f.id));
+  const replyPending = state.feedbackPending.has(feedbackPendingKey("reply", f.id));
+  const hidePending = state.feedbackPending.has(feedbackPendingKey("hide", f.id));
+  const reactions = canReact ? `<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${f.id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👍 ${Number(f.likeCount) || 0}`}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${f.id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👎 ${Number(f.dislikeCount) || 0}`}</button></div>` : "";
+  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}" data-feedback-id="${f.id}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reactions}${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}" ${editPending || !f.content ? "disabled" : ""}>${editPending ? "저장 중…" : "수정"}</button><button class="button danger" data-delete-feedback="${f.id}" ${deletePending ? "disabled" : ""}>${deletePending ? "삭제 중…" : "삭제"}</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" maxlength="300" placeholder="운영자 답변" ${replyPending ? "disabled" : ""}>${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}" ${replyPending || !f.content ? "disabled" : ""}>${replyPending ? "저장 중…" : f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}" ${hidePending ? "disabled" : ""}>${hidePending ? "처리 중…" : f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
+}
+async function performFeedbackOperation(type, id, request, operation) {
+  const context = feedbackOperationContext(request);
+  const pendingKey = beginFeedbackPending(type, id, context);
+  if (!pendingKey) return { ok: false, duplicate: true };
+  try {
+    const value = await operation(context);
+    return isFeedbackContextCurrent(context, true) ? { ok: true, value } : { ok: false, stale: true };
+  } catch (error) {
+    return isFeedbackContextCurrent(context, true) ? { ok: false, error } : { ok: false, stale: true };
+  } finally { endFeedbackPending(pendingKey); }
 }
 function bindFeedback(list, request = beginScreenRequest("feedback")) {
   const form = document.querySelector("#feedbackForm");
+  const initialPending = state.editingFeedback ? state.feedbackPending.has(feedbackPendingKey("edit", state.editingFeedback.id)) : state.feedbackPending.has(feedbackPendingKey("submit", "global"));
+  const initialSubmit = form.querySelector('[type="submit"]');
+  if (initialPending) { initialSubmit.disabled = true; initialSubmit.textContent = state.editingFeedback ? "저장 중…" : "보내는 중…"; }
   form.onsubmit = async event => {
     event.preventDefault();
     const button = event.submitter;
     if (!button || button.disabled) return;
+    const editing = state.editingFeedback;
     const content = document.querySelector("#feedbackText").value;
     const originalText = button.textContent;
     button.disabled = true;
-    button.textContent = state.editingFeedback ? "저장 중…" : "보내는 중…";
-    try {
-      if (state.editingFeedback) await updateFeedback(state.editingFeedback.id, content);
-      else await submitFeedback(content, document.querySelector("#anonymousCheck").checked, document.querySelector("#secretCheck").checked);
-      if (!isScreenRequestCurrent(request)) return;
+    button.textContent = editing ? "저장 중…" : "보내는 중…";
+    const result = await performFeedbackOperation(editing ? "edit" : "submit", editing?.id || "global", request, context => editing ? updateFeedback(editing.id, content, context) : submitFeedback(content, document.querySelector("#anonymousCheck").checked, document.querySelector("#secretCheck").checked, context));
+    if (result.ok) {
       state.editingFeedback = null;
       showToast("의견을 저장했어요.");
-      renderFeedback();
-    } catch (error) {
-      if (!isScreenRequestCurrent(request)) return;
-      showToast(userErrorMessage(error, "의견을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
-      button.disabled = false;
-      button.textContent = originalText;
+      renderFeedback(true);
+    } else if (result.error) {
+      showToast(userErrorMessage(result.error, "의견을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
+      if (button.isConnected) { button.disabled = false; button.textContent = originalText; }
     }
   };
-  document.querySelector("#cancelFeedbackEdit")?.addEventListener("click", () => { state.editingFeedback = null; renderFeedback(); });
-  document.querySelectorAll("[data-feedback-view]").forEach(button => button.onclick = () => { state.feedbackView = button.dataset.feedbackView; state.editingFeedback = null; renderFeedback(); });
-  document.querySelectorAll("[data-feedback-sort]").forEach(button => button.onclick = () => { state.feedbackSort = button.dataset.feedbackSort; renderFeedback(); });
-  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackReaction(button.dataset.id, button.dataset.react); if (isScreenRequestCurrent(request)) renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
-  document.querySelectorAll("[data-edit-feedback]").forEach(button => button.onclick = () => { const feedback = list.find(item => item.id === button.dataset.editFeedback); state.editingFeedback = { id: feedback.id, content: feedback.content?.content || "" }; renderFeedback(); });
-  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => { await deleteFeedback(button.dataset.deleteFeedback); if (!isScreenRequestCurrent(request)) return; showToast("의견을 삭제했어요."); renderFeedback(); }));
-  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "저장 중…"; try { await saveAdminReply(button.dataset.adminReply, document.querySelector(`[data-reply-text="${button.dataset.adminReply}"]`).value); if (!isScreenRequestCurrent(request)) return; showToast("답변을 저장했어요."); renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
-  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => { if (button.disabled) return; const original = button.textContent; button.disabled = true; button.textContent = "처리 중…"; try { await toggleFeedbackHidden(button.dataset.adminHide, button.dataset.hidden !== "true"); if (isScreenRequestCurrent(request)) renderFeedback(); } catch (error) { if (!isScreenRequestCurrent(request)) return; showToast(userErrorMessage(error)); button.disabled = false; button.textContent = original; } });
+  document.querySelector("#cancelFeedbackEdit")?.addEventListener("click", () => { state.editingFeedback = null; renderFeedback(true); });
+  document.querySelectorAll("[data-feedback-view]").forEach(button => button.onclick = () => { state.feedbackView = button.dataset.feedbackView; state.editingFeedback = null; renderFeedback(true); });
+  document.querySelectorAll("[data-feedback-sort]").forEach(button => button.onclick = () => { state.feedbackSort = button.dataset.feedbackSort; renderFeedback(true); });
+  document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => {
+    const result = await performFeedbackOperation("reaction", button.dataset.id, request, context => toggleFeedbackReaction(button.dataset.id, button.dataset.react, context));
+    if (result.ok) { showToast(result.value ? `${result.value === "like" ? "좋아요" : "싫어요"}를 눌렀어요.` : "반응을 취소했어요."); renderFeedback(true); }
+    else if (result.error) showToast(userErrorMessage(result.error));
+  });
+  document.querySelectorAll("[data-edit-feedback]").forEach(button => button.onclick = () => { const feedback = list.find(item => item.id === button.dataset.editFeedback); if (!feedback?.content) return; state.editingFeedback = { id: feedback.id, content: feedback.content.content || "" }; renderFeedback(true); });
+  document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => {
+    const result = await performFeedbackOperation("delete", button.dataset.deleteFeedback, request, context => deleteFeedback(button.dataset.deleteFeedback, context));
+    if (result.ok) { showToast("의견을 삭제했어요."); renderFeedback(true); }
+    else if (result.error) showToast(userErrorMessage(result.error));
+  }));
+  document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => {
+    const id = button.dataset.adminReply;
+    const reply = document.querySelector(`[data-reply-text="${id}"]`).value;
+    const result = await performFeedbackOperation("reply", id, request, context => saveAdminReply(id, reply, context));
+    if (result.ok) { showToast("답변을 저장했어요."); renderFeedback(true); }
+    else if (result.error) showToast(userErrorMessage(result.error));
+  });
+  document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => {
+    const id = button.dataset.adminHide;
+    const result = await performFeedbackOperation("hide", id, request, context => toggleFeedbackHidden(id, button.dataset.hidden !== "true", context));
+    if (result.ok) renderFeedback(true);
+    else if (result.error) showToast(userErrorMessage(result.error));
+  });
 }
 
 function renderGuide() {
@@ -2967,16 +3205,22 @@ async function toggleLike(drawingId, cachedDrawing = null) {
   showToast(liked ? "좋아요를 눌렀어요!" : "좋아요를 취소했어요.");
   return next;
 }
-async function toggleFeedbackReaction(id, next) {
-  const owner = (await db.ref(`feedbackOwners/${id}/${state.user.id}`).once("value")).val() === true;
-  if (owner) throw new Error("내 의견에는 반응할 수 없어요.");
+async function toggleFeedbackReaction(id, next, context = feedbackOperationContext()) {
+  const meta = feedbackMetaById(id);
+  if (!feedbackCanReact(meta) || !isFeedbackContextCurrent(context)) throw new Error("이 의견에는 반응할 수 없어요.");
+  const uid = context.uid;
   let current = null;
-  const result = await db.ref(`feedbackReactions/${id}/${state.user.id}`).transaction(value => {
+  const result = await db.ref(`feedbackReactions/${id}/${uid}`).transaction(value => {
     current = value === next ? null : next;
     return current;
   }, null, false);
   if (!result.committed) throw new Error("반응을 저장하지 못했어요.");
-  showToast(current ? `${current === "like" ? "좋아요" : "싫어요"}를 눌렀어요.` : "반응을 취소했어요.");
+  if (!isFeedbackContextCurrent(context)) return null;
+  const reactions = safeObject(state.feedbackSnapshot?.reactions[id]);
+  if (current) reactions[uid] = current; else delete reactions[uid];
+  state.feedbackSnapshot.reactions[id] = reactions;
+  recalculateFeedbackReaction(meta, reactions, uid);
+  return current;
 }
 
 boot();

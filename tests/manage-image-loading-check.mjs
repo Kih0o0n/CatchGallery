@@ -270,7 +270,7 @@ function manageLoaderHarness({ images = [], max = 2, load } = {}) {
     editImageRequestId: 0, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 1, dirty: true, activeSaveOperationId: 1, publishing: true
   };
-  const cleanup = Function("state", "cancelSolveImageLoading", "cancelManageImageLoading", "releaseCanvasHistory", "unlockDrawingScroll", `${pick("cleanupScreenResources")}; return cleanupScreenResources;`)(cleanupState, () => solveCancels++, () => manageCancels++, () => { cleanupState.historyRedrawPending = false; }, () => unlocks++);
+  const cleanup = Function("state", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", "unlockDrawingScroll", `${pick("cleanupScreenResources")}; return cleanupScreenResources;`)(cleanupState, () => solveCancels++, () => manageCancels++, () => {}, () => { cleanupState.historyRedrawPending = false; }, () => unlocks++);
   cleanup(); cleanup();
   assert.equal(cleanupState.manageDrawings, null);
   assert.equal(manageCancels, 2);

@@ -233,7 +233,7 @@ assert.match(app, /undo\.onclick = undoCanvas/);
 assert.match(app, /clearCanvas\.onclick = openClearCanvasModal/);
 assert.match(app, /function openClearCanvasModal\([\s\S]*clearCanvasBoard\(true\)/);
 assert.match(styles, /\.colors[^}]+grid-template-columns:\s*repeat\(8,/);
-assert.match(styles, /@media \(max-width: 699px\)[\s\S]+\.draw-screen \.color \{ width: 29px; height: 29px/);
+assert.match(styles, /\.draw-screen \.color \{ width: clamp\(30px, 9vw, 38px\); height: clamp\(30px, 9vw, 38px\)/);
 assert.doesNotMatch(styles.match(/\.colors \{[^}]+\}/)?.[0] || "", /overflow-x|white-space:\s*nowrap/);
 assert.match(app, /home-version[^\n]+v1\.2\.0/);
 

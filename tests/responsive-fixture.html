@@ -34,7 +34,8 @@
       document.querySelector(".word-card .category").textContent = "동물";
       document.querySelector(".word-card .word").textContent = "고양이";
     }
-    document.querySelector("[data-colors]").innerHTML = Array.from({ length: 8 }, (_, i) => `<button class="color${i === 0 ? " selected" : ""}" style="background:hsl(${i * 45} 70% 70%)"></button>`).join("");
+    const drawingColors = JSON.parse(params.get("colors") || "[]");
+    document.querySelector("[data-colors]").innerHTML = drawingColors.map(([value, name], i) => `<button class="color${i === 0 ? " selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필"></button>`).join("");
     document.querySelector("[data-thumbnails]").innerHTML = Array.from({ length: 10 }, (_, i) => `<div class="thumbnail-wrap"><button class="thumbnail"><div class="gallery-image-slot"></div><small>그린 사람 ${i + 1}</small></button></div>`).join("");
     document.querySelector("[data-modal-copy]").innerHTML = Array.from({ length: 12 }, () => "<p>큰 글자와 짧은 화면에서도 내용을 스크롤할 수 있어야 합니다.</p>").join("");
     const view = params.get("view") || "draw";
@@ -54,6 +55,7 @@
       horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
       documentScroll: document.documentElement.scrollHeight > innerHeight,
       canvas: canvas ? [Math.round(canvas.width), Math.round(canvas.height)] : null,
+      colorCount: document.querySelectorAll("[data-colors] > .color").length,
       saveVisible: save ? save.bottom <= innerHeight : null,
       columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : null,
       modal: modal ? { clientHeight: modal.clientHeight, scrollHeight: modal.scrollHeight } : null,

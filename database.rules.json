@@ -13,7 +13,7 @@
     "users": {
       ".read": "auth != null",
       "$uid": {
-        ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.child('nickname').isString() && newData.child('nicknameKey').isString() && newData.child('score').val() === 0 && newData.child('rankingDeleted').val() === false) || (data.exists() && !newData.exists() && !root.child('nicknameIndex').child(data.child('nicknameKey').val()).exists()) || (data.exists() && newData.child('nickname').val() === data.child('nickname').val() && newData.child('nicknameKey').val() === data.child('nicknameKey').val() && newData.child('createdAt').val() === data.child('createdAt').val() && ((newData.child('score').val() === data.child('score').val() && newData.child('rankingDeleted').val() === data.child('rankingDeleted').val() && newData.child('rankingDeletedAt').val() === data.child('rankingDeletedAt').val()) || (data.child('rankingDeleted').val() === false && newData.child('rankingDeleted').val() === true && newData.child('score').val() === 0 && newData.child('rankingDeletedAt').isNumber()) || (data.child('rankingDeleted').val() === true && data.child('score').val() === 0 && newData.child('rankingDeleted').val() === false && newData.child('score').val() === 0 && !newData.child('rankingDeletedAt').exists()))))",
+        ".write": "auth != null && auth.uid === $uid && ((!data.exists() && auth.token.email === newData.child('nicknameKey').val() + '@catchgallery.app' && newData.child('nickname').isString() && newData.child('nicknameKey').isString() && newData.child('score').val() === 0 && newData.child('rankingDeleted').val() === false) || (data.exists() && !newData.exists() && root.child('nicknameIndex').child(data.child('nicknameKey').val()).val() !== auth.uid) || (data.exists() && newData.child('nickname').val() === data.child('nickname').val() && newData.child('nicknameKey').val() === data.child('nicknameKey').val() && newData.child('createdAt').val() === data.child('createdAt').val() && ((newData.child('score').val() === data.child('score').val() && newData.child('rankingDeleted').val() === data.child('rankingDeleted').val() && newData.child('rankingDeletedAt').val() === data.child('rankingDeletedAt').val()) || (data.child('rankingDeleted').val() === false && newData.child('rankingDeleted').val() === true && newData.child('score').val() === 0 && newData.child('rankingDeletedAt').isNumber()) || (data.child('rankingDeleted').val() === true && data.child('score').val() === 0 && newData.child('rankingDeleted').val() === false && newData.child('score').val() === 0 && !newData.child('rankingDeletedAt').exists()))))",
         ".validate": "newData.hasChildren(['nickname','nicknameKey','score','createdAt','lastSeenAt','rankingDeleted'])",
         "nickname": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 8" },
         "nicknameKey": { ".validate": "newData.isString() && newData.val().matches(/^u_[0-9a-f]+$/)" },
@@ -29,8 +29,8 @@
     "nicknameIndex": {
       "$key": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid && root.child('users').child(auth.uid).child('nicknameKey').val() === $key) || data.val() === auth.uid && newData.val() === auth.uid)",
-        ".validate": "newData.isString()"
+        ".write": "auth != null && auth.token.email === $key + '@catchgallery.app' && ((!data.exists() && newData.val() === auth.uid && root.child('users').child(auth.uid).child('nicknameKey').val() === $key) || (data.val() === auth.uid && (!newData.exists() || newData.val() === auth.uid)))",
+        ".validate": "!newData.exists() || newData.isString()"
       }
     },
 

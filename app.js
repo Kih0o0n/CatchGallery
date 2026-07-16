@@ -630,6 +630,16 @@ function nicknameKey(value) {
   return "u_" + Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
 }
 function internalEmail(value) { return `${nicknameKey(value)}@catchgallery.app`; }
+function nicknameFromInternalEmail(email) {
+  const match = String(email || "").toLowerCase().match(/^(u_([0-9a-f]+))@catchgallery\.app$/);
+  if (!match || match[2].length % 2 !== 0) return null;
+  try {
+    const bytes = new Uint8Array(match[2].match(/../g).map(value => parseInt(value, 16)));
+    const nickname = normalizeNickname(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (!nickname || nickname.length > 8 || nicknameKey(nickname) !== match[1]) return null;
+    return nickname;
+  } catch (_) { return null; }
+}
 function validateCredentials(nickname, password) {
   const name = normalizeNickname(nickname);
   if (!name || name.length > 8) throw new Error("닉네임은 1~8글자로 입력해 주세요.");
@@ -646,99 +656,277 @@ function authMessage(error, mode) {
   if (code.includes("too-many-requests")) return "잠시 후 다시 시도해 주세요.";
   return mode === "signup" ? "회원가입 중 오류가 발생했습니다." : "로그인 중 오류가 발생했습니다.";
 }
-async function ensureUserProfile(firebaseUser, nickname) {
+let authGeneration = 0;
+let authOwnerUid;
+let appliedAuthGeneration = -1;
+const authPreparationPromises = new Map();
+const pendingAuthIntents = new Map();
+let logoutRequested = false;
+
+function authEmailKey(firebaseUser) { return String(firebaseUser?.email || "").toLowerCase(); }
+function claimAuthOwner(firebaseUser) {
+  const uid = firebaseUser?.uid || null;
+  if (authOwnerUid !== uid) {
+    authOwnerUid = uid;
+    authGeneration++;
+  }
+  return { uid, generation: authGeneration };
+}
+function isAuthPreparationCurrent(uid, generation) {
+  return !!uid && authOwnerUid === uid && authGeneration === generation && auth?.currentUser?.uid === uid;
+}
+function profileNickname(firebaseUser, hint) {
+  const email = authEmailKey(firebaseUser);
+  const candidates = [hint, pendingAuthIntents.get(email)?.nickname, localStorage.getItem("catchGalleryNickname"), nicknameFromInternalEmail(email)];
+  for (const candidate of candidates) {
+    const nickname = normalizeNickname(candidate || "");
+    if (nickname && nickname.length <= 8 && internalEmail(nickname) === email) return nickname;
+  }
+  throw new Error("닉네임 정보를 복구할 수 없어 다시 로그인해야 합니다.");
+}
+async function claimNicknameIndex(key, uid) {
+  const result = await db.ref(`nicknameIndex/${key}`).transaction(current => current == null || current === uid ? uid : undefined, null, false);
+  const owner = result.snapshot?.val() ?? null;
+  if (!result.committed || owner !== uid) {
+    const error = new Error("이미 사용 중인 닉네임입니다.");
+    error.nicknameIndexObservation = { status: owner === null ? "absent" : "present", owner };
+    throw error;
+  }
+  return { status: "present", owner: uid };
+}
+async function ensureUserProfile(firebaseUser, nicknameHint, signupIntent = null, shouldContinue) {
   const uid = firebaseUser.uid;
-  const key = nicknameKey(nickname);
   const now = serverNow();
   const ref = db.ref(`users/${uid}`);
   const snap = await ref.once("value");
   const old = snap.val();
-  const profile = old || { nickname, nicknameKey: key, score: 0, createdAt: now, lastSeenAt: now, rankingDeleted: false, rankingDeletedAt: null };
-  profile.nickname = profile.nickname || nickname;
-  profile.nicknameKey = profile.nicknameKey || key;
-  profile.lastSeenAt = now;
-  if (profile.rankingDeleted) {
-    profile.score = 0;
-    profile.rankingDeleted = false;
-    profile.rankingDeletedAt = null;
-  }
-  await ref.set(profile);
-  try {
-    await db.ref(`nicknameIndex/${key}`).set(uid);
-  } catch (error) {
-    if (!old) {
-      try { await ref.remove(); } catch (_) {}
+  if (!shouldContinue()) throw Object.assign(new Error("오래된 인증 작업입니다."), { code: "auth/stale-operation" });
+  if (old) {
+    if (authEmailKey(firebaseUser) !== `${old.nicknameKey}@catchgallery.app` || nicknameKey(old.nickname) !== old.nicknameKey) {
+      throw new Error("사용자 프로필 정보를 안전하게 확인할 수 없습니다.");
     }
+    const changes = old.rankingDeleted
+      ? { lastSeenAt: now, score: 0, rankingDeleted: false, rankingDeletedAt: null }
+      : { lastSeenAt: now };
+    await ref.update(changes);
+    return { profile: { ...old, ...changes }, created: false, key: old.nicknameKey };
+  }
+  const nickname = profileNickname(firebaseUser, nicknameHint);
+  const key = nicknameKey(nickname);
+  const profile = { nickname, nicknameKey: key, score: 0, createdAt: now, lastSeenAt: now, rankingDeleted: false };
+  if (signupIntent) signupIntent.database.profile = "absent";
+  if (!shouldContinue()) throw Object.assign(new Error("오래된 인증 작업입니다."), { code: "auth/stale-operation" });
+  await ref.set(profile);
+  if (signupIntent) signupIntent.database.profile = "present";
+  try {
+    if (!shouldContinue()) throw Object.assign(new Error("오래된 인증 작업입니다."), { code: "auth/stale-operation" });
+    const observation = await claimNicknameIndex(key, uid);
+    if (signupIntent) signupIntent.database.index = observation;
+  } catch (error) {
+    if (signupIntent) signupIntent.database.index = error.nicknameIndexObservation || { status: "unknown", owner: null };
     throw error;
   }
-  return loadCurrentUser(uid);
+  return { profile, created: true, key };
+}
+async function loadCurrentUser(userId, options = {}) {
+  if (!db || !userId) return null;
+  const shouldApply = options.shouldApply || (() => isAuthPreparationCurrent(userId, options.generation));
+  const [profileSnap, adminSnap, score] = await Promise.all([
+    options.profile ? null : db.ref(`users/${userId}`).once("value"),
+    options.adminSnapshot ? options.adminSnapshot : db.ref(`admins/${userId}`).once("value"),
+    options.score !== undefined ? options.score : loadUserScore(userId)
+  ]);
+  const profile = options.profile || profileSnap?.val();
+  if (!profile || !shouldApply()) return null;
+  setCacheSession(userId);
+  state.user = { id: userId, ...profile, score };
+  state.isAdmin = adminSnap.val() === true;
+  localStorage.setItem("catchGalleryUid", userId);
+  localStorage.setItem("catchGalleryNickname", state.user.nickname);
+  scoreEl.textContent = `${score}점`;
+  return state.user;
+}
+async function prepareAuthSession(firebaseUser, nicknameHint = null) {
+  const { uid, generation } = claimAuthOwner(firebaseUser);
+  if (!uid) return null;
+  if (appliedAuthGeneration === generation && state.user?.id === uid) return state.user;
+  const existing = authPreparationPromises.get(uid);
+  if (existing?.generation === generation) return existing.promise;
+  const intent = pendingAuthIntents.get(authEmailKey(firebaseUser)) || null;
+  const entry = { generation, promise: null };
+  entry.promise = (async () => {
+    const prepared = await ensureUserProfile(firebaseUser, nicknameHint, intent?.kind === "signup" ? intent : null, () => isAuthPreparationCurrent(uid, generation) && authPreparationPromises.get(uid) === entry);
+    const [adminSnapshot, score] = await Promise.all([
+      db.ref(`admins/${uid}`).once("value"),
+      loadUserScore(uid)
+    ]);
+    if (!isAuthPreparationCurrent(uid, generation) || authPreparationPromises.get(uid) !== entry) return null;
+    const user = await loadCurrentUser(uid, { profile: prepared.profile, adminSnapshot, score, generation });
+    if (!user || !isAuthPreparationCurrent(uid, generation)) return null;
+    appliedAuthGeneration = generation;
+    state.authReady = true;
+    const target = intent?.route || (location.hash.slice(1) || "home");
+    transitionRoute(target, { historyMode: "replace", historyState: { route: target, galleryDetail: false } });
+    expireOldDrawings().catch(console.error);
+    return user;
+  })().finally(() => {
+    if (authPreparationPromises.get(uid) === entry) authPreparationPromises.delete(uid);
+  });
+  authPreparationPromises.set(uid, entry);
+  return entry.promise;
+}
+async function observeSignupDatabase(firebaseUser, intent, cleanupErrors) {
+  const uid = firebaseUser.uid;
+  try {
+    const snap = await db.ref(`users/${uid}`).once("value");
+    intent.database.profile = snap.exists() ? "present" : "absent";
+  } catch (error) { intent.database.profile = "unknown"; cleanupErrors.push(error); }
+  try {
+    const snap = await db.ref(`nicknameIndex/${intent.key}`).once("value");
+    const owner = snap.val() ?? null;
+    intent.database.index = { status: owner === null ? "absent" : "present", owner };
+  } catch (error) { intent.database.index = { status: "unknown", owner: null }; cleanupErrors.push(error); }
+}
+async function cleanupSignup(firebaseUser, intent, originalError) {
+  const cleanupErrors = [];
+  const uid = firebaseUser.uid;
+  if (auth?.currentUser?.uid !== uid) {
+    const result = { stale: true, database: intent.database, errors: cleanupErrors };
+    originalError.cleanupState = result;
+    return result;
+  }
+  await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+  if (intent.database.index.status === "present" && intent.database.index.owner === uid) {
+    try {
+      await db.ref(`nicknameIndex/${intent.key}`).remove();
+      intent.database.index = { status: "absent", owner: null };
+    } catch (error) {
+      cleanupErrors.push(error);
+      intent.database.index = { status: "unknown", owner: null };
+      await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+    }
+  }
+  if (intent.database.index.status === "absent" && intent.database.profile === "present") {
+    try {
+      await db.ref(`users/${uid}`).remove();
+      intent.database.profile = "absent";
+    } catch (error) {
+      cleanupErrors.push(error);
+      intent.database.profile = "unknown";
+      await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+      if (intent.database.profile === "present" && intent.database.index.status === "absent" && auth?.currentUser?.uid === uid) {
+        try { intent.database.index = await claimNicknameIndex(intent.key, uid); }
+        catch (restoreError) {
+          cleanupErrors.push(restoreError);
+          intent.database.index = restoreError.nicknameIndexObservation || { status: "unknown", owner: null };
+        }
+      }
+    }
+  }
+  const databaseAbsent = intent.database.profile === "absent" && intent.database.index.status === "absent";
+  if (databaseAbsent && auth?.currentUser?.uid === uid) {
+    try { await firebaseUser.delete(); }
+    catch (error) {
+      cleanupErrors.push(error);
+      if (auth?.currentUser?.uid === uid) try { await auth.signOut(); } catch (signOutError) { cleanupErrors.push(signOutError); }
+    }
+  } else if (auth?.currentUser?.uid === uid) {
+    try { await auth.signOut(); } catch (error) { cleanupErrors.push(error); }
+  }
+  const result = { stale: false, database: intent.database, errors: cleanupErrors };
+  originalError.cleanupState = result;
+  return result;
 }
 async function signUp(nickname, password) {
   const name = validateCredentials(nickname, password);
-  localStorage.setItem("catchGalleryNickname", name);
+  const email = internalEmail(name);
+  const intent = { kind: "signup", nickname: name, key: nicknameKey(name), route: "home", database: { profile: "unknown", index: { status: "unknown", owner: null } } };
+  pendingAuthIntents.set(email, intent);
   try {
-    const credential = await auth.createUserWithEmailAndPassword(internalEmail(name), password);
+    const credential = await auth.createUserWithEmailAndPassword(email, password);
     try {
-      await ensureUserProfile(credential.user, name);
+      return await prepareAuthSession(credential.user, name);
     } catch (error) {
-      try { await credential.user.delete(); } catch (_) {}
+      const cleanup = await cleanupSignup(credential.user, intent, error);
+      if (!error.cleanupState) error.cleanupState = cleanup;
+      if (cleanup.stale) return null;
       throw error;
     }
-    return state.user;
   } catch (error) {
     if (error.message?.startsWith("이미") || error.message?.includes("오류")) throw error;
-    throw new Error(authMessage(error, "signup"));
+    const publicError = new Error(authMessage(error, "signup"));
+    if (error.cleanupState) publicError.cleanupState = error.cleanupState;
+    throw publicError;
+  } finally {
+    if (pendingAuthIntents.get(email) === intent) pendingAuthIntents.delete(email);
   }
 }
 async function signIn(nickname, password) {
   const name = validateCredentials(nickname, password);
-  localStorage.setItem("catchGalleryNickname", name);
+  const email = internalEmail(name);
+  const intent = { kind: "login", nickname: name, route: "home" };
+  pendingAuthIntents.set(email, intent);
+  let signedInUser = null;
   try {
-    const credential = await auth.signInWithEmailAndPassword(internalEmail(name), password);
-    await ensureUserProfile(credential.user, name);
-    return state.user;
+    const credential = await auth.signInWithEmailAndPassword(email, password);
+    signedInUser = credential.user;
+    return await prepareAuthSession(credential.user, name);
   } catch (error) {
+    if (signedInUser && auth?.currentUser?.uid !== signedInUser.uid) return null;
+    if (signedInUser && auth?.currentUser?.uid === signedInUser.uid) { try { await auth.signOut(); } catch (_) {} }
     if (error.message?.includes("오류")) throw error;
     throw new Error(authMessage(error, "login"));
+  } finally {
+    if (pendingAuthIntents.get(email) === intent) pendingAuthIntents.delete(email);
   }
 }
-async function signOut() {
-  await auth.signOut();
+function applyLoggedOut() {
+  const { generation } = claimAuthOwner(null);
+  const shouldClearNickname = logoutRequested;
+  logoutRequested = false;
+  if (appliedAuthGeneration === generation && !state.user && state.authReady) {
+    if (shouldClearNickname) localStorage.removeItem("catchGalleryNickname");
+    return false;
+  }
+  appliedAuthGeneration = generation;
+  authPreparationPromises.clear();
   setCacheSession(null);
   state.user = null;
   state.isAdmin = false;
+  state.authReady = true;
+  scoreEl.textContent = "0점";
   localStorage.removeItem("catchGalleryUid");
-  localStorage.removeItem("catchGalleryNickname");
-  route("login");
+  if (shouldClearNickname) localStorage.removeItem("catchGalleryNickname");
+  const keepLoginForm = state.route === "login" && typeof document !== "undefined" && document.querySelector("#loginForm");
+  if (!keepLoginForm) transitionRoute("login", { historyMode: "replace", historyState: { route: "login", galleryDetail: false } });
+  return true;
+}
+async function signOut() {
+  logoutRequested = true;
+  try { await auth.signOut(); }
+  catch (error) { logoutRequested = false; throw error; }
+  applyLoggedOut();
+}
+async function handleAuthState(firebaseUser) {
+  if (!firebaseUser) return applyLoggedOut();
+  claimAuthOwner(firebaseUser);
+  try {
+    return await prepareAuthSession(firebaseUser);
+  } catch (error) {
+    const current = authOwnerUid === firebaseUser.uid && auth?.currentUser?.uid === firebaseUser.uid;
+    if (!current) return null;
+    console.error(error);
+    if (pendingAuthIntents.has(authEmailKey(firebaseUser))) return null;
+    showToast(userErrorMessage(error));
+    try { await auth.signOut(); } catch (_) {}
+    applyLoggedOut();
+    return null;
+  }
 }
 async function boot() {
   initFirebase();
   loading();
-  auth.onAuthStateChanged(async firebaseUser => {
-    setCacheSession(firebaseUser?.uid || null);
-    try {
-      if (firebaseUser) {
-        const saved = localStorage.getItem("catchGalleryNickname");
-        const snap = await db.ref(`users/${firebaseUser.uid}`).once("value");
-        if (snap.exists()) await loadCurrentUser(firebaseUser.uid);
-        else if (saved) await ensureUserProfile(firebaseUser, saved);
-        else {
-          await auth.signOut();
-          throw new Error("닉네임 정보를 복구할 수 없어 다시 로그인해야 합니다.");
-        }
-      } else {
-        state.user = null;
-        state.isAdmin = false;
-      }
-    } catch (error) {
-      console.error(error);
-      showToast(userErrorMessage(error));
-    }
-    state.authReady = true;
-    const initial = state.user ? (location.hash.slice(1) || "home") : "login";
-    transitionRoute(initial, { historyMode: "replace", historyState: { route: initial, galleryDetail: false } });
-    if (state.user) expireOldDrawings().catch(console.error);
-  });
+  auth.onAuthStateChanged(firebaseUser => { handleAuthState(firebaseUser).catch(console.error); });
 }
 
 function claimScore(claim) { return typeof claim === "number" ? claim : Number(claim?.score) || 0; }
@@ -764,23 +952,6 @@ function solverRewardHtml(successCount, hintUsed = false) {
   if (successCount >= 10) return `<b>지금 맞혀도 랭킹 점수는 오르지 않아요.</b><small>최근 1시간 동안 정답을 많이 맞혔어요. 정답 확인은 계속할 수 있어요!</small>`;
   if (successCount >= 5) return `<b>지금 맞히면 +${reward}점!</b><small>최근 1시간 동안 정답을 여러 개 맞혀 보상이 조금 줄었어요. 계속 맞힐 수 있어요!</small>`;
   return `<b>지금 맞히면 +${reward}점!</b>${hintUsed ? "<small>카테고리 힌트 사용으로 4점이 줄었어요.</small>" : ""}`;
-}
-async function loadCurrentUser(userId = auth?.currentUser?.uid, shouldApply = () => true) {
-  if (!db || !userId) return null;
-  const [snap, adminSnap, score] = await Promise.all([
-    db.ref(`users/${userId}`).once("value"),
-    db.ref(`admins/${userId}`).once("value"),
-    loadUserScore(userId)
-  ]);
-  if (!snap.exists()) return null;
-  if (!shouldApply()) return null;
-  if (auth?.currentUser?.uid === userId) setCacheSession(userId);
-  state.user = { id: userId, ...snap.val(), score };
-  state.isAdmin = adminSnap.val() === true;
-  localStorage.setItem("catchGalleryUid", userId);
-  localStorage.setItem("catchGalleryNickname", state.user.nickname);
-  scoreEl.textContent = `${score}점`;
-  return state.user;
 }
 
 function renderRoute(_options = {}, _transitionId = routeTransitionId) {
@@ -808,7 +979,6 @@ function renderLogin() {
     loginButton.textContent = "로그인 중…";
     try {
       await signIn(nameInput.value, passwordInput.value);
-      route("home");
     } catch (error) {
       showToast(userErrorMessage(error, "로그인 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."));
     } finally {
@@ -848,7 +1018,6 @@ function openSignupModal() {
     try {
       await signUp(nickname.value, password.value);
       close();
-      route("home");
     } catch (error) {
       showToast(userErrorMessage(error, "회원가입 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요."));
       completeButton.disabled = false;

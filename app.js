@@ -1239,13 +1239,20 @@ function applyCanvasAction(context, action) {
     context.clearRect(0, 0, 720, 720);
     return;
   }
-  if (action.type !== "stroke" || !Array.isArray(action.points) || action.points.length < 2) return;
+  if (action.type !== "stroke" || !Array.isArray(action.points) || action.points.length < 1) return;
   context.globalCompositeOperation = action.compositeOperation;
   context.strokeStyle = action.color;
+  context.fillStyle = action.color;
   context.lineWidth = action.width;
   context.lineCap = "round";
   context.lineJoin = "round";
   context.beginPath();
+  if (action.points.length === 1) {
+    context.arc(action.points[0].x, action.points[0].y, action.width / 2, 0, Math.PI * 2);
+    context.fill();
+    context.closePath();
+    return;
+  }
   context.moveTo(action.points[0].x, action.points[0].y);
   for (const point of action.points.slice(1)) context.lineTo(point.x, point.y);
   context.stroke();
@@ -1260,7 +1267,7 @@ function compactCanvasHistory() {
   }
 }
 function commitCanvasAction(action) {
-  if (!action || (action.type === "stroke" && action.points.length < 2)) return false;
+  if (!action || (action.type === "stroke" && (!Array.isArray(action.points) || action.points.length < 1))) return false;
   state.history.push(action);
   compactCanvasHistory();
   return true;
@@ -1270,6 +1277,7 @@ function redrawCanvasFromHistory() {
   const tool = {
     compositeOperation: state.ctx.globalCompositeOperation,
     color: state.ctx.strokeStyle,
+    fillColor: state.ctx.fillStyle,
     width: state.ctx.lineWidth
   };
   state.ctx.globalCompositeOperation = "source-over";
@@ -1278,6 +1286,7 @@ function redrawCanvasFromHistory() {
   state.history.forEach(action => applyCanvasAction(state.ctx, action));
   state.ctx.globalCompositeOperation = tool.compositeOperation;
   state.ctx.strokeStyle = tool.color;
+  state.ctx.fillStyle = tool.fillColor;
   state.ctx.lineWidth = tool.width;
   state.ctx.lineCap = "round";
   state.ctx.lineJoin = "round";
@@ -1307,13 +1316,13 @@ function sameCanvasPoint(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y
 function canvasContentAfterAction(hasContent, action) {
   if (!action) return hasContent;
   if (action.type === "clear") return false;
-  if (action.type === "stroke" && action.points?.length >= 2 && action.compositeOperation !== "destination-out") return true;
+  if (action.type === "stroke" && action.points?.length >= 1 && action.compositeOperation !== "destination-out") return true;
   return hasContent;
 }
 function canvasHasVisibleContent() {
   let hasContent = !!state.historyBaseHasContent;
   state.history.forEach(action => { hasContent = canvasContentAfterAction(hasContent, action); });
-  if (state.activeStroke?.points?.length >= 2) hasContent = canvasContentAfterAction(hasContent, state.activeStroke);
+  if (state.activeStroke?.points?.length >= 1) hasContent = canvasContentAfterAction(hasContent, state.activeStroke);
   return hasContent;
 }
 function safeSetPointerCapture(canvas, pointerId) {
@@ -1363,7 +1372,7 @@ function setupCanvas(imageData) {
     state.activeStroke = null;
     state.canvasRect = null;
   };
-  const finish = (event, { releaseCapture = false, commit = true } = {}) => {
+  const finish = (event, { releaseCapture = false, commit = true, commitDot = false } = {}) => {
     if (inputDisposed || !ownsCanvas()) return false;
     const pointerId = event?.pointerId ?? state.activePointerId;
     if (pointerId !== state.activePointerId || !state.activeStroke) return false;
@@ -1371,7 +1380,10 @@ function setupCanvas(imageData) {
     const stroke = state.activeStroke;
     clearActivePointer();
     context.closePath();
-    if (commit) commitCanvasAction(stroke);
+    if (commit && (stroke.points.length > 1 || commitDot)) {
+      if (stroke.points.length === 1) applyCanvasAction(context, stroke);
+      if (commitCanvasAction(stroke)) state.dirty = true;
+    }
     flushPendingCanvasRedraw();
     unlockDrawingScroll();
     if (releaseCapture) safeReleasePointerCapture(canvas, pointerId);
@@ -1418,7 +1430,7 @@ function setupCanvas(imageData) {
     if (!ownsCanvas() || !state.drawing || event.pointerId !== state.activePointerId || !state.activeStroke || !state.canvasRect) return;
     preventIfCancelable(event);
     if (pointerMoveShowsContactEnded(event)) {
-      finish(event, { releaseCapture: true, commit: true });
+      finish(event, { releaseCapture: true, commit: true, commitDot: true });
       return;
     }
     const movedAt = eventTime(event);
@@ -1434,17 +1446,18 @@ function setupCanvas(imageData) {
     context.stroke();
     state.dirty = true;
   };
-  const end = event => finish(event, { releaseCapture: true, commit: true });
-  const lost = event => finish(event, { releaseCapture: false, commit: true });
+  const end = event => finish(event, { releaseCapture: true, commit: true, commitDot: true });
+  const cancel = event => finish(event, { releaseCapture: true, commit: true });
+  const lost = event => finish(event, { releaseCapture: false, commit: true, commitDot: true });
   const interrupt = () => finish(null, { releaseCapture: true, commit: true });
   const visibility = () => { if (document.visibilityState === "hidden") interrupt(); };
   canvas.addEventListener("pointerdown", start, { passive: false });
   canvas.addEventListener("pointermove", move, { passive: false });
   canvas.addEventListener("pointerup", end, { passive: false });
-  canvas.addEventListener("pointercancel", end, { passive: false });
+  canvas.addEventListener("pointercancel", cancel, { passive: false });
   canvas.addEventListener("lostpointercapture", lost);
   window.addEventListener("pointerup", end, { passive: false });
-  window.addEventListener("pointercancel", end, { passive: false });
+  window.addEventListener("pointercancel", cancel, { passive: false });
   window.addEventListener("blur", interrupt);
   window.addEventListener("pagehide", interrupt);
   document.addEventListener("visibilitychange", visibility);
@@ -1454,10 +1467,10 @@ function setupCanvas(imageData) {
     canvas.removeEventListener("pointerdown", start);
     canvas.removeEventListener("pointermove", move);
     canvas.removeEventListener("pointerup", end);
-    canvas.removeEventListener("pointercancel", end);
+    canvas.removeEventListener("pointercancel", cancel);
     canvas.removeEventListener("lostpointercapture", lost);
     window.removeEventListener("pointerup", end);
-    window.removeEventListener("pointercancel", end);
+    window.removeEventListener("pointercancel", cancel);
     window.removeEventListener("blur", interrupt);
     window.removeEventListener("pagehide", interrupt);
     document.removeEventListener("visibilitychange", visibility);

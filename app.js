@@ -686,7 +686,13 @@ function profileNickname(firebaseUser, hint) {
 }
 async function claimNicknameIndex(key, uid) {
   const result = await db.ref(`nicknameIndex/${key}`).transaction(current => current == null || current === uid ? uid : undefined, null, false);
-  if (!result.committed || result.snapshot?.val() !== uid) throw new Error("이미 사용 중인 닉네임입니다.");
+  const owner = result.snapshot?.val() ?? null;
+  if (!result.committed || owner !== uid) {
+    const error = new Error("이미 사용 중인 닉네임입니다.");
+    error.nicknameIndexObservation = { status: owner === null ? "absent" : "present", owner };
+    throw error;
+  }
+  return { status: "present", owner: uid };
 }
 async function ensureUserProfile(firebaseUser, nicknameHint, signupIntent = null, shouldContinue) {
   const uid = firebaseUser.uid;
@@ -708,16 +714,16 @@ async function ensureUserProfile(firebaseUser, nicknameHint, signupIntent = null
   const nickname = profileNickname(firebaseUser, nicknameHint);
   const key = nicknameKey(nickname);
   const profile = { nickname, nicknameKey: key, score: 0, createdAt: now, lastSeenAt: now, rankingDeleted: false };
+  if (signupIntent) signupIntent.database.profile = "absent";
   if (!shouldContinue()) throw Object.assign(new Error("오래된 인증 작업입니다."), { code: "auth/stale-operation" });
   await ref.set(profile);
-  if (signupIntent) signupIntent.profileCreated = true;
+  if (signupIntent) signupIntent.database.profile = "present";
   try {
     if (!shouldContinue()) throw Object.assign(new Error("오래된 인증 작업입니다."), { code: "auth/stale-operation" });
-    await claimNicknameIndex(key, uid);
-    if (signupIntent) signupIntent.indexCreated = true;
+    const observation = await claimNicknameIndex(key, uid);
+    if (signupIntent) signupIntent.database.index = observation;
   } catch (error) {
-    try { await ref.remove(); } catch (_) {}
-    if (signupIntent) signupIntent.profileCreated = false;
+    if (signupIntent) signupIntent.database.index = error.nicknameIndexObservation || { status: "unknown", owner: null };
     throw error;
   }
   return { profile, created: true, key };
@@ -769,41 +775,88 @@ async function prepareAuthSession(firebaseUser, nicknameHint = null) {
   authPreparationPromises.set(uid, entry);
   return entry.promise;
 }
+async function observeSignupDatabase(firebaseUser, intent, cleanupErrors) {
+  const uid = firebaseUser.uid;
+  try {
+    const snap = await db.ref(`users/${uid}`).once("value");
+    intent.database.profile = snap.exists() ? "present" : "absent";
+  } catch (error) { intent.database.profile = "unknown"; cleanupErrors.push(error); }
+  try {
+    const snap = await db.ref(`nicknameIndex/${intent.key}`).once("value");
+    const owner = snap.val() ?? null;
+    intent.database.index = { status: owner === null ? "absent" : "present", owner };
+  } catch (error) { intent.database.index = { status: "unknown", owner: null }; cleanupErrors.push(error); }
+}
 async function cleanupSignup(firebaseUser, intent, originalError) {
   const cleanupErrors = [];
-  let removedIndex = false;
-  if (intent.indexCreated) {
-    try { await db.ref(`nicknameIndex/${intent.key}`).remove(); intent.indexCreated = false; removedIndex = true; } catch (error) { cleanupErrors.push(error); }
+  const uid = firebaseUser.uid;
+  if (auth?.currentUser?.uid !== uid) {
+    const result = { stale: true, database: intent.database, errors: cleanupErrors };
+    originalError.cleanupState = result;
+    return result;
   }
-  if (intent.profileCreated) {
-    try { await db.ref(`users/${firebaseUser.uid}`).remove(); intent.profileCreated = false; } catch (error) { cleanupErrors.push(error); }
+  await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+  if (intent.database.index.status === "present" && intent.database.index.owner === uid) {
+    try {
+      await db.ref(`nicknameIndex/${intent.key}`).remove();
+      intent.database.index = { status: "absent", owner: null };
+    } catch (error) {
+      cleanupErrors.push(error);
+      intent.database.index = { status: "unknown", owner: null };
+      await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+    }
   }
-  if (intent.profileCreated && removedIndex) {
-    try { await claimNicknameIndex(intent.key, firebaseUser.uid); intent.indexCreated = true; } catch (error) { cleanupErrors.push(error); }
+  if (intent.database.index.status === "absent" && intent.database.profile === "present") {
+    try {
+      await db.ref(`users/${uid}`).remove();
+      intent.database.profile = "absent";
+    } catch (error) {
+      cleanupErrors.push(error);
+      intent.database.profile = "unknown";
+      await observeSignupDatabase(firebaseUser, intent, cleanupErrors);
+      if (intent.database.profile === "present" && intent.database.index.status === "absent" && auth?.currentUser?.uid === uid) {
+        try { intent.database.index = await claimNicknameIndex(intent.key, uid); }
+        catch (restoreError) {
+          cleanupErrors.push(restoreError);
+          intent.database.index = restoreError.nicknameIndexObservation || { status: "unknown", owner: null };
+        }
+      }
+    }
   }
-  if (!intent.profileCreated && !intent.indexCreated) {
-    try { await firebaseUser.delete(); } catch (error) { cleanupErrors.push(error); try { await auth.signOut(); } catch (signOutError) { cleanupErrors.push(signOutError); } }
-  } else {
+  const databaseAbsent = intent.database.profile === "absent" && intent.database.index.status === "absent";
+  if (databaseAbsent && auth?.currentUser?.uid === uid) {
+    try { await firebaseUser.delete(); }
+    catch (error) {
+      cleanupErrors.push(error);
+      if (auth?.currentUser?.uid === uid) try { await auth.signOut(); } catch (signOutError) { cleanupErrors.push(signOutError); }
+    }
+  } else if (auth?.currentUser?.uid === uid) {
     try { await auth.signOut(); } catch (error) { cleanupErrors.push(error); }
   }
-  if (cleanupErrors.length) originalError.cleanupErrors = cleanupErrors;
+  const result = { stale: false, database: intent.database, errors: cleanupErrors };
+  originalError.cleanupState = result;
+  return result;
 }
 async function signUp(nickname, password) {
   const name = validateCredentials(nickname, password);
   const email = internalEmail(name);
-  const intent = { kind: "signup", nickname: name, key: nicknameKey(name), route: "home", profileCreated: false, indexCreated: false };
+  const intent = { kind: "signup", nickname: name, key: nicknameKey(name), route: "home", database: { profile: "unknown", index: { status: "unknown", owner: null } } };
   pendingAuthIntents.set(email, intent);
   try {
     const credential = await auth.createUserWithEmailAndPassword(email, password);
     try {
       return await prepareAuthSession(credential.user, name);
     } catch (error) {
-      await cleanupSignup(credential.user, intent, error);
+      const cleanup = await cleanupSignup(credential.user, intent, error);
+      if (!error.cleanupState) error.cleanupState = cleanup;
+      if (cleanup.stale) return null;
       throw error;
     }
   } catch (error) {
     if (error.message?.startsWith("이미") || error.message?.includes("오류")) throw error;
-    throw new Error(authMessage(error, "signup"));
+    const publicError = new Error(authMessage(error, "signup"));
+    if (error.cleanupState) publicError.cleanupState = error.cleanupState;
+    throw publicError;
   } finally {
     if (pendingAuthIntents.get(email) === intent) pendingAuthIntents.delete(email);
   }
@@ -819,6 +872,7 @@ async function signIn(nickname, password) {
     signedInUser = credential.user;
     return await prepareAuthSession(credential.user, name);
   } catch (error) {
+    if (signedInUser && auth?.currentUser?.uid !== signedInUser.uid) return null;
     if (signedInUser && auth?.currentUser?.uid === signedInUser.uid) { try { await auth.signOut(); } catch (_) {} }
     if (error.message?.includes("오류")) throw error;
     throw new Error(authMessage(error, "login"));
@@ -843,7 +897,8 @@ function applyLoggedOut() {
   scoreEl.textContent = "0점";
   localStorage.removeItem("catchGalleryUid");
   if (shouldClearNickname) localStorage.removeItem("catchGalleryNickname");
-  transitionRoute("login", { historyMode: "replace", historyState: { route: "login", galleryDetail: false } });
+  const keepLoginForm = state.route === "login" && typeof document !== "undefined" && document.querySelector("#loginForm");
+  if (!keepLoginForm) transitionRoute("login", { historyMode: "replace", historyState: { route: "login", galleryDetail: false } });
   return true;
 }
 async function signOut() {

@@ -125,11 +125,18 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   };
   class TestImage { constructor() { image = this; } set src(value) { this.value = value; } }
   const helperCode = actionNames.map(pick).join("\n");
-  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
-    state, document, windowTarget, 15, () => {}, event => event?.preventDefault?.(), () => { locks++; }, () => { unlocks++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
+  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
+    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { locks++; }, () => { unlocks++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
   return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, counts: () => ({ drawingQueries, brushQueries, locks, unlocks }) };
+}
+function assertPointerMetadataCleared(state) {
+  assert.equal(state.activePointerId, null);
+  assert.equal(state.activePointerType, null);
+  assert.equal(state.activePointerStartedAt, null);
+  assert.equal(state.activePointerLastEventAt, null);
+  assert.equal(state.activePointerCaptured, false);
 }
 
 {
@@ -149,6 +156,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   assert.equal(h.state.history[0].color, "#3e3a48");
   assert.deepEqual(h.state.history[0].points, [{ x: 20, y: 20 }, { x: 40, y: 40 }, { x: 60, y: 60 }]);
   assert.equal(h.state.dirty, true); assert.equal(h.state.drawing, false); assert.equal(h.state.activePointerId, null); assert.equal(h.state.activeStroke, null); assert.equal(h.state.canvasRect, null);
+  assertPointerMetadataCleared(h.state);
   assert.equal(h.counts().unlocks, 1, "lost capture after pointerup cannot finish twice");
 }
 
@@ -168,6 +176,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   assert.equal(h.state.history.length, 1);
   assert.equal(h.state.history[0].compositeOperation, "destination-out");
   assert.equal(h.counts().unlocks, 1);
+  assertPointerMetadataCleared(h.state);
 }
 
 {
@@ -398,16 +407,38 @@ for (const endTarget of ["canvas", "window"]) {
   assert.equal(h.state.activePointerId, null);
 }
 
-// A new primary pointer finalizes a stale stroke, then starts a distinct action.
-for (const [firstType, secondType] of [["touch", "pen"], ["pen", "touch"]]) {
+// A recent active pen cannot be displaced by a separately-primary touch pointer.
+{
   const h = setupHarness();
-  h.canvas.emit("pointerdown", { pointerId: 10, pointerType: firstType, clientX: 10, clientY: 20 });
-  h.canvas.emit("pointermove", { pointerId: 10, pointerType: firstType, clientX: 30, clientY: 40 });
-  h.canvas.emit("pointerdown", { pointerId: 11, pointerType: secondType, clientX: 200, clientY: 210 });
-  assert.equal(h.state.history.length, 1, `${firstType} stale stroke must be committed once`);
+  h.canvas.emit("pointerdown", { pointerId: 10, pointerType: "pen", timeStamp: 100, clientX: 10, clientY: 20 });
+  h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 200, clientX: 30, clientY: 40 });
+  const activeStroke = h.state.activeStroke;
+  const beginPaths = h.context.calls.filter(call => call[0] === "beginPath").length;
+  h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
+  h.canvas.emit("pointermove", { pointerId: 11, pointerType: "touch", timeStamp: 350, clientX: 220, clientY: 230 });
+  h.canvas.emit("pointerup", { pointerId: 11, pointerType: "touch", timeStamp: 400 });
+  h.canvas.emit("pointercancel", { pointerId: 11, pointerType: "touch", timeStamp: 450 });
+  assert.equal(h.state.activePointerId, 10);
+  assert.equal(h.state.activePointerType, "pen");
+  assert.equal(h.state.activeStroke, activeStroke);
+  assert.equal(h.state.history.length, 0);
+  assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, beginPaths);
+  h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 500, clientX: 50, clientY: 60 });
+  h.canvas.emit("pointerup", { pointerId: 10, pointerType: "pen", timeStamp: 550 });
+  assert.equal(h.state.history.length, 1);
+  assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }, { x: 80, y: 80 }]);
+}
+
+// A stale pen is finalized once, then touch starts a disconnected action.
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 10, pointerType: "pen", timeStamp: 100, clientX: 10, clientY: 20 });
+  h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 200, clientX: 30, clientY: 40 });
+  h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 1800, clientX: 200, clientY: 210 });
+  assert.equal(h.state.history.length, 1, "stale pen stroke must be committed once");
   assert.equal(h.state.activePointerId, 11);
-  h.canvas.emit("pointermove", { pointerId: 11, pointerType: secondType, clientX: 220, clientY: 230 });
-  h.window.emit("pointerup", { pointerId: 11, pointerType: secondType });
+  h.canvas.emit("pointermove", { pointerId: 11, pointerType: "touch", timeStamp: 1900, clientX: 220, clientY: 230 });
+  h.window.emit("pointerup", { pointerId: 11, pointerType: "touch", timeStamp: 2000 });
   assert.equal(h.state.history.length, 2);
   assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }]);
   assert.deepEqual(h.state.history[1].points, [{ x: 380, y: 380 }, { x: 420, y: 420 }]);
@@ -415,14 +446,35 @@ for (const [firstType, secondType] of [["touch", "pen"], ["pen", "touch"]]) {
   assert.equal(h.context.calls.filter(call => call[0] === "moveTo").length, 2, "the new pointer begins with moveTo rather than connecting by lineTo");
 }
 
+// A stale one-point pen creates no history action before touch begins.
 {
   const h = setupHarness();
-  h.canvas.emit("pointerdown", { pointerId: 20 });
-  h.canvas.emit("pointerdown", { pointerId: 21, pointerType: "pen", clientX: 100, clientY: 110 });
+  h.canvas.emit("pointerdown", { pointerId: 20, pointerType: "pen", timeStamp: 100 });
+  h.canvas.emit("pointerdown", { pointerId: 21, pointerType: "touch", timeStamp: 1700, clientX: 100, clientY: 110 });
   assert.equal(h.state.history.length, 0, "a stale one-point pointer is not an undo action");
-  h.canvas.emit("pointermove", { pointerId: 21, pointerType: "pen", clientX: 120, clientY: 130 });
-  h.window.emit("pointerup", { pointerId: 21, pointerType: "pen" });
+  h.canvas.emit("pointermove", { pointerId: 21, pointerType: "touch", timeStamp: 1800, clientX: 120, clientY: 130 });
+  h.window.emit("pointerup", { pointerId: 21, pointerType: "touch", timeStamp: 1900 });
   assert.equal(h.state.history.length, 1);
+}
+
+// Pen takes priority over touch, while duplicate downs and non-primary input do nothing.
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 22, pointerType: "touch", timeStamp: 100, clientX: 10, clientY: 20 });
+  h.canvas.emit("pointermove", { pointerId: 22, pointerType: "touch", timeStamp: 200, clientX: 30, clientY: 40 });
+  const beginPaths = h.context.calls.filter(call => call[0] === "beginPath").length;
+  h.canvas.emit("pointerdown", { pointerId: 22, pointerType: "touch", timeStamp: 250, clientX: 300, clientY: 310 });
+  h.canvas.emit("pointerdown", { pointerId: 23, pointerType: "pen", isPrimary: false, timeStamp: 260 });
+  assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, beginPaths);
+  assert.equal(h.state.history.length, 0);
+  h.canvas.emit("pointerdown", { pointerId: 24, pointerType: "pen", timeStamp: 300, clientX: 200, clientY: 210 });
+  assert.equal(h.state.history.length, 1);
+  h.canvas.emit("pointermove", { pointerId: 24, pointerType: "pen", timeStamp: 400, clientX: 220, clientY: 230 });
+  h.window.emit("pointerup", { pointerId: 24, pointerType: "pen", timeStamp: 500 });
+  assert.equal(h.state.history.length, 2);
+  assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }]);
+  assert.deepEqual(h.state.history[1].points, [{ x: 380, y: 380 }, { x: 420, y: 420 }]);
+  assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, 2);
 }
 
 // Mouse/pen moves with reliable released-contact signals end the stroke; touch remains conservative.
@@ -453,6 +505,7 @@ for (const pointerType of ["mouse", "pen"]) {
   assert.equal(h.state.history.length, 1);
   assert.equal(h.state.activePointerId, null);
   assert.equal(h.counts().unlocks, 1);
+  assertPointerMetadataCleared(h.state);
 }
 
 {
@@ -468,6 +521,7 @@ for (const pointerType of ["mouse", "pen"]) {
   assert.equal(h.window.listeners.has("pointercancel"), false);
   assert.equal(h.context.calls.length, callsBeforeCleanup, "late window events cannot touch the released canvas");
   assert.equal(h.state.canvasInputCleanup, null);
+  assertPointerMetadataCleared(h.state);
 }
 
 function clearModalHarness({ baseHasContent = false, history = [] } = {}) {

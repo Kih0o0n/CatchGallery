@@ -27,7 +27,9 @@ function fakeContext() {
 function fakeCanvas(context = fakeContext()) {
   const listeners = new Map();
   return {
-    width: 720, height: 720, isConnected: true, context, listeners, rectReads: 0, captures: new Set(),
+    width: 720, height: 720, clientWidth: 360, clientHeight: 360, isConnected: true, context, listeners, rectReads: 0, captures: new Set(), style: {},
+    parentElement: { clientWidth: 360, clientHeight: 360, clientLeft: 0, clientTop: 0, getBoundingClientRect: () => ({ left: 10, top: 20, width: 360, height: 360 }) },
+    closest() { return this.parentElement; },
     getContext: (...args) => { context.contextArgs = args; return context; },
     getBoundingClientRect() { this.rectReads++; return { left: 10, top: 20, width: 360, height: 360 }; },
     addEventListener(type, listener) { listeners.set(type, listener); },
@@ -47,7 +49,7 @@ function fakeEventTarget() {
     emit(type, values = {}) { listeners.get(type)?.({ pointerId: 7, pointerType: "touch", buttons: 0, pressure: 0, cancelable: true, preventDefault() {}, ...values }); }
   };
 }
-const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "canvasPoint", "sameCanvasPoint", "canvasContentAfterAction", "canvasHasVisibleContent", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded"];
+const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "canvasPoint", "clampCanvasZoom", "clampCanvasTransform", "canvasTouchCenter", "canvasTouchDistance", "calculateCanvasGestureTransform", "sameCanvasPoint", "canvasContentAfterAction", "canvasHasVisibleContent", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded"];
 function historyHarness() {
   const screenContext = fakeContext();
   const screen = fakeCanvas(screenContext);
@@ -145,6 +147,55 @@ function assertPointerMetadataCleared(state) {
   assert.equal(state.activePointerStartedAt, null);
   assert.equal(state.activePointerLastEventAt, null);
   assert.equal(state.activePointerCaptured, false);
+}
+
+{
+  const { api } = historyHarness();
+  assert.equal(api.clampCanvasZoom(0.5), 1);
+  assert.equal(api.clampCanvasZoom(4), 2.5);
+  assert.deepEqual(api.clampCanvasTransform(1, -50, -70, 300, 300), { scale: 1, x: 0, y: 0 });
+  assert.deepEqual(api.clampCanvasTransform(2, -999, 20, 300, 300), { scale: 2, x: -300, y: 0 });
+  const start = { points: [{ x: 100, y: 100 }, { x: 200, y: 100 }], scale: 1, x: 0, y: 0 };
+  const zoomed = api.calculateCanvasGestureTransform(start, [{ x: 50, y: 100 }, { x: 250, y: 100 }], 300, 300);
+  assert.deepEqual(zoomed, { scale: 2, x: -150, y: -100 });
+  assert.equal((150 - zoomed.x) / zoomed.scale, 150, "the point below the pinch center remains anchored");
+  const panned = api.calculateCanvasGestureTransform(start, [{ x: 80, y: 130 }, { x: 280, y: 130 }], 300, 300);
+  assert.deepEqual(panned, { scale: 2, x: -120, y: -70 }, "moving both fingers pans the zoomed canvas");
+  assert.deepEqual(api.calculateCanvasGestureTransform(start, [{ x: 100, y: 100 }, { x: 100, y: 100 }], 300, 300), { scale: 1, x: 0, y: 0 }, "zero distance cannot corrupt the transform");
+  assert.deepEqual(api.calculateCanvasGestureTransform({ ...start, scale: Number.NaN }, [{ x: 0, y: 100 }, { x: 500, y: 100 }], 300, 300), { scale: 2.5, x: -125, y: -150 });
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
+  h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
+  assert.equal(h.state.dirty, true);
+  h.canvas.emit("pointerdown", { pointerId: 61, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  assert.equal(h.state.canvasGestureActive, true);
+  assert.equal(h.state.history.length, 0, "the interrupted first-finger stroke is not committed");
+  assert.equal(h.state.dirty, false, "gesture takeover restores dirty to its pre-stroke value");
+  assert.equal(h.state.activeStroke, null);
+  assert.ok(h.context.calls.some(call => call[0] === "clearRect"), "history redraw removes the interrupted live stroke");
+  h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 300, clientY: 70 });
+  assert.ok(h.state.canvasZoomScale > 1 && h.state.canvasZoomScale <= 2.5);
+  assert.ok(h.state.canvasZoomX <= 0 && h.state.canvasZoomY <= 0);
+  assert.match(h.canvas.style.transform, /^translate\(/);
+  h.canvas.emit("pointerup", { pointerId: 60, pointerType: "touch" });
+  assert.equal(h.state.canvasGestureActive, false);
+  h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 320, clientY: 90 });
+  h.canvas.emit("pointerdown", { pointerId: 62, pointerType: "touch", isPrimary: false, clientX: 100, clientY: 100 });
+  assert.equal(h.state.history.length, 0, "remaining and third gesture touches cannot draw");
+  h.canvas.emit("pointerup", { pointerId: 61, pointerType: "touch" });
+  h.canvas.emit("pointercancel", { pointerId: 62, pointerType: "touch" });
+  assert.equal(h.state.canvasGestureSuppressedPointers.size, 0);
+  h.canvas.emit("pointerdown", { pointerId: 63, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  h.canvas.emit("pointerup", { pointerId: 63, pointerType: "touch" });
+  assert.equal(h.state.history.length, 1, "a fresh touch can draw after every gesture finger ends");
+}
+
+{
+  const { api, screen } = historyHarness();
+  assert.deepEqual(api.canvasPoint({ clientX: 110, clientY: 120 }, { left: -90, top: -80, width: 720, height: 720 }, screen), { x: 200, y: 200 }, "transformed canvas bounds preserve 720-space drawing coordinates");
 }
 
 {
@@ -460,11 +511,13 @@ for (const endTarget of ["canvas", "window"]) {
   const activeStroke = h.state.activeStroke;
   const beginPaths = h.context.calls.filter(call => call[0] === "beginPath").length;
   h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
+  h.canvas.emit("pointerdown", { pointerId: 12, pointerType: "touch", isPrimary: false, timeStamp: 320, clientX: 240, clientY: 250 });
   h.canvas.emit("pointermove", { pointerId: 11, pointerType: "touch", timeStamp: 350, clientX: 220, clientY: 230 });
   h.canvas.emit("pointerup", { pointerId: 11, pointerType: "touch", timeStamp: 400 });
   h.canvas.emit("pointercancel", { pointerId: 11, pointerType: "touch", timeStamp: 450 });
   assert.equal(h.state.activePointerId, 10);
   assert.equal(h.state.activePointerType, "pen");
+  assert.equal(h.state.canvasGestureActive, false, "touches cannot start a pinch while pen owns drawing");
   assert.equal(h.state.activeStroke, activeStroke);
   assert.equal(h.state.history.length, 0);
   assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, beginPaths);
@@ -472,6 +525,25 @@ for (const endTarget of ["canvas", "window"]) {
   h.canvas.emit("pointerup", { pointerId: 10, pointerType: "pen", timeStamp: 550 });
   assert.equal(h.state.history.length, 1);
   assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }, { x: 80, y: 80 }]);
+}
+
+// Route cleanup during a gesture releases captures, transform state, suppression, and window fallbacks.
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 70, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
+  h.canvas.emit("pointerdown", { pointerId: 71, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  h.canvas.emit("pointermove", { pointerId: 71, pointerType: "touch", clientX: 300, clientY: 70 });
+  assert.equal(h.state.canvasGestureActive, true);
+  h.releaseCanvasHistory();
+  assert.equal(h.state.canvasGestureActive, false);
+  assert.equal(h.state.canvasGesturePointers.size, 0);
+  assert.equal(h.state.canvasGestureSuppressedPointers.size, 0);
+  assert.equal(h.state.canvasZoomScale, 1);
+  assert.equal(h.state.canvasZoomX, 0);
+  assert.equal(h.state.canvasZoomY, 0);
+  assert.equal(h.canvas.style.transform, "translate(0px, 0px) scale(1)");
+  assert.equal(h.window.listeners.has("pointerup"), false);
+  assert.equal(h.window.listeners.has("pointercancel"), false);
 }
 
 // A stale pen is finalized once, then touch starts a disconnected action.

@@ -16,11 +16,12 @@ function pick(name) {
 function fakeContext() {
   const calls = [];
   return {
-    calls, globalCompositeOperation: "source-over", strokeStyle: "#111", lineWidth: 9, lineCap: "", lineJoin: "",
+    calls, globalCompositeOperation: "source-over", strokeStyle: "#111", fillStyle: "#111", lineWidth: 9, lineCap: "", lineJoin: "",
     clearRect: (...args) => calls.push(["clearRect", ...args]),
     drawImage: (...args) => calls.push(["drawImage", ...args]),
     beginPath: () => calls.push(["beginPath"]), moveTo: (...args) => calls.push(["moveTo", ...args]),
-    lineTo: (...args) => calls.push(["lineTo", ...args]), stroke: () => calls.push(["stroke"]), closePath: () => calls.push(["closePath"])
+    lineTo: (...args) => calls.push(["lineTo", ...args]), arc: (...args) => calls.push(["arc", ...args]),
+    stroke: () => calls.push(["stroke"]), fill: () => calls.push(["fill"]), closePath: () => calls.push(["closePath"])
   };
 }
 function fakeCanvas(context = fakeContext()) {
@@ -71,9 +72,8 @@ assert.match(source, /const DRAWING_HISTORY_LIMIT = 15/);
   assert.equal(context.lineWidth, 20);
   assert.equal(context.lineCap, "round"); assert.equal(context.lineJoin, "round");
   assert.deepEqual(context.calls, [["beginPath"], ["moveTo", 1, 2], ["lineTo", 3, 4], ["lineTo", 5, 6], ["stroke"], ["closePath"]]);
-  const before = context.calls.length;
-  api.applyCanvasAction(context, { type: "stroke", points: [{ x: 1, y: 1 }] });
-  assert.equal(context.calls.length, before, "a one-point stroke draws nothing");
+  api.applyCanvasAction(context, { type: "stroke", compositeOperation: "source-over", color: "#def", width: 12, points: [{ x: 7, y: 8 }] });
+  assert.deepEqual(context.calls.slice(-4), [["beginPath"], ["arc", 7, 8, 6, 0, Math.PI * 2], ["fill"], ["closePath"]], "a one-point stroke redraws as a round dot");
   api.applyCanvasAction(context, { type: "clear" });
   assert.deepEqual(context.calls.at(-1), ["clearRect", 0, 0, 720, 720]);
 }
@@ -86,6 +86,14 @@ assert.match(source, /const DRAWING_HISTORY_LIMIT = 15/);
   assert.deepEqual(h.state.history.map(action => action.points[0].x), actions.slice(2).map(action => action.points[0].x));
   assert.deepEqual(h.baseContext.calls.filter(call => call[0] === "moveTo"), [["moveTo", 0, 0], ["moveTo", 1, 0]], "old actions fold into the base in order");
   assert.ok(h.state.history.every(action => !Object.values(action).includes(h.screen) && !Object.values(action).includes(h.screenContext)));
+}
+
+{
+  const h = historyHarness();
+  h.api.commitCanvasAction({ type: "stroke", compositeOperation: "source-over", color: "red", width: 14, points: [{ x: 9, y: 10 }] });
+  for (let i = 0; i < 15; i++) h.api.commitCanvasAction({ type: "stroke", compositeOperation: "source-over", color: "black", width: 2, points: [{ x: i, y: 0 }, { x: i, y: 1 }] });
+  assert.deepEqual(h.baseContext.calls.find(call => call[0] === "arc"), ["arc", 9, 10, 7, 0, Math.PI * 2], "history compression preserves a dot");
+  assert.equal(h.state.historyBaseHasContent, true);
 }
 
 {
@@ -163,9 +171,34 @@ function assertPointerMetadataCleared(state) {
 {
   const h = setupHarness();
   h.canvas.emit("pointerdown"); h.canvas.emit("pointerup");
-  assert.equal(h.state.history.length, 0);
-  assert.equal(h.state.dirty, false);
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.dirty, true);
   assert.equal(h.context.calls.filter(call => call[0] === "stroke").length, 0);
+  assert.deepEqual(h.context.calls.find(call => call[0] === "arc"), ["arc", 0, 0, 4.5, 0, Math.PI * 2]);
+  assert.equal(h.api.canvasHasVisibleContent(), true, "a source-over dot makes the canvas publishable");
+  h.canvas.emit("lostpointercapture");
+  assert.equal(h.state.history.length, 1, "pointerup followed by lost capture commits the dot once");
+}
+
+{
+  const h = setupHarness();
+  h.context.globalCompositeOperation = "destination-out";
+  h.brush.value = "20";
+  h.canvas.emit("pointerdown", { clientX: 20, clientY: 30 });
+  h.canvas.emit("pointerup", { clientX: 20, clientY: 30 });
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.history[0].compositeOperation, "destination-out");
+  assert.deepEqual(h.context.calls.find(call => call[0] === "arc"), ["arc", 20, 20, 10, 0, Math.PI * 2]);
+  assert.equal(h.api.canvasHasVisibleContent(), false, "an eraser dot on an empty canvas is not content");
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 8 });
+  h.canvas.emit("pointercancel", { pointerId: 8 });
+  h.canvas.emit("lostpointercapture", { pointerId: 8 });
+  assert.equal(h.state.history.length, 0, "a cancelled one-point contact preserves the existing cancellation policy");
+  assert.equal(h.context.calls.some(call => call[0] === "fill"), false);
 }
 
 {
@@ -192,6 +225,16 @@ function assertPointerMetadataCleared(state) {
   assert.deepEqual(h.state.history.map(action => action.type), ["stroke"]);
   assert.ok(h.screenContext.calls.some(call => call[0] === "stroke"));
   h.state.history = []; undoCanvas(); assert.equal(toasts, 1);
+}
+
+{
+  const h = historyHarness();
+  const undoCanvas = Function("state", "showToast", "redrawCanvasFromHistory", `${pick("undoCanvas")}; return undoCanvas;`)(h.state, () => {}, h.api.redrawCanvasFromHistory);
+  h.api.commitCanvasAction({ type: "stroke", compositeOperation: "source-over", color: "black", width: 9, points: [{ x: 3, y: 4 }] });
+  assert.equal(h.api.canvasHasVisibleContent(), true);
+  undoCanvas();
+  assert.equal(h.state.history.length, 0, "undo removes a one-point action");
+  assert.equal(h.api.canvasHasVisibleContent(), false);
 }
 
 {
@@ -253,11 +296,12 @@ function assertPointerMetadataCleared(state) {
   h.image().onload();
   assert.equal(h.state.historyRedrawPending, true);
   h.canvas.emit("pointerup");
-  assert.equal(h.state.history.length, 0);
-  assert.equal(h.state.dirty, false);
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.dirty, true);
   assert.equal(h.state.historyRedrawPending, false);
   assert.equal(h.context.calls.filter(call => call[0] === "drawImage").length, 1);
   assert.equal(h.context.calls.filter(call => call[0] === "stroke").length, 0);
+  assert.ok(h.context.calls.some(call => call[0] === "fill"), "a dot over a loaded edit image is replayed");
 }
 
 {
@@ -266,10 +310,11 @@ function assertPointerMetadataCleared(state) {
   h.canvas.emit("pointermove");
   h.canvas.emit("pointermove");
   h.canvas.emit("pointerup");
-  assert.equal(h.state.history.length, 0);
+  assert.equal(h.state.history.length, 1);
   assert.equal(h.context.calls.filter(call => call[0] === "lineTo").length, 0);
   assert.equal(h.context.calls.filter(call => call[0] === "stroke").length, 0);
-  assert.equal(h.state.dirty, false);
+  assert.equal(h.context.calls.filter(call => call[0] === "fill").length, 1);
+  assert.equal(h.state.dirty, true);
 }
 
 {

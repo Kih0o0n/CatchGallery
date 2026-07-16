@@ -250,6 +250,9 @@ body.drawing-scroll-lock {
 
 .draw-screen {
   display: grid;
+  width: 100%;
+  max-width: 756px;
+  margin-inline: auto;
   grid-template-areas: "heading" "word" "custom" "canvas" "tools" "notice" "save";
   gap: 7px;
   padding-top: 10px;
@@ -258,7 +261,7 @@ body.drawing-scroll-lock {
 .draw-screen .section-head { grid-area: heading; align-items: center; margin: 0; }
 .draw-screen .word-card { grid-area: word; margin: 0; }
 .draw-screen .custom-word-form { grid-area: custom; margin: 0; }
-.draw-screen .canvas-wrap { grid-area: canvas; width: min(100%, clamp(180px, calc(100dvh - 447px), 54dvh), 720px); margin: 0 auto; }
+.draw-screen .canvas-wrap { grid-area: canvas; width: 100%; max-width: 720px; margin: 0 auto; }
 .draw-screen .tools { grid-area: tools; margin: 0; display: grid; gap: 7px; }
 .draw-screen .notice { grid-area: notice; margin: 0; }
 .draw-screen > #saveDrawing { grid-area: save; }
@@ -301,6 +304,7 @@ body.drawing-scroll-lock {
 
 @media (min-width: 640px) and (max-height: 500px) and (orientation: landscape) {
   .draw-screen {
+    max-width: 1140px;
     grid-template-columns: minmax(250px, 68dvh) minmax(300px, 1fr);
     grid-template-areas: "canvas heading" "canvas word" "canvas custom" "canvas tools" "canvas notice" "canvas save";
     align-items: start;
@@ -326,7 +330,6 @@ body.drawing-scroll-lock {
   .status-tabs + div .drawing-card { margin: 0; }
   .answer-row { position: static; }
   .thumbnail-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-  .draw-screen .canvas-wrap { width: min(100%, 59dvh, 720px); }
 }
 
 @media (min-width: 900px) {
@@ -344,8 +347,9 @@ body.drawing-scroll-lock {
   .gallery-detail .frame-image { height: min(68dvh, 720px); max-height: 720px; }
 }
 
-@media (min-width: 960px) and (min-height: 501px) {
+@media (min-width: 960px) and (min-height: 501px) and (orientation: landscape) {
   .draw-screen {
+    max-width: 1140px;
     grid-template-columns: minmax(360px, min(76dvh, 720px)) minmax(320px, 420px);
     grid-template-areas: "canvas heading" "canvas word" "canvas custom" "canvas tools" "canvas notice" "canvas save";
     justify-content: center;

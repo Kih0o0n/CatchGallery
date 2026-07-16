@@ -129,12 +129,12 @@ function classList(initial = []) {
 assert.doesNotMatch(styles, /100dvh\s*-\s*61px|100dvh\s*-\s*375px/);
 assert.match(styles, /\.app-shell\s*\{[^}]*max-width:\s*1180px/);
 assert.match(styles, /\.canvas-wrap\s*\{[^}]*max-width:\s*720px/);
-assert.match(styles, /@media \(min-width: 960px\)[\s\S]*grid-template-areas:\s*"canvas heading"/);
+assert.match(styles, /@media \(min-width: 960px\) and \(min-height: 501px\) and \(orientation: landscape\)[\s\S]*grid-template-areas:\s*"canvas heading"/);
 assert.match(styles, /@media \(min-width: 700px\)[\s\S]*\.answer-row\s*\{ position:\s*static/);
 assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);
-assert.doesNotMatch(styles, /\.draw-screen \.canvas-wrap[^}]*\b(?:42|36)dvh/);
-assert.match(styles, /clamp\(180px, calc\(100dvh - 447px\), 54dvh\)/);
+assert.doesNotMatch(styles, /\.draw-screen \.canvas-wrap[^}]*dvh/);
+assert.match(styles, /\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*100%[^}]*max-width:\s*720px/);
 assert.match(fixture, /<header class="app-header">\s*<button class="home-button"[\s\S]*<button class="brand-button"[\s\S]*<div class="score-chip"/);
 assert.match(fixture, /<div class="tools"><div class="colors" data-colors><\/div><div class="tool-grid"><input id="brushSize"[\s\S]*id="eraser"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
 assert.match(fixture, /<div class="card word-card"[\s\S]*<form class="custom-word-form hidden"[\s\S]*<canvas id="drawingCanvas" width="720" height="720"[\s\S]*<button id="saveDrawing"/);

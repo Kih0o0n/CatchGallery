@@ -47,6 +47,8 @@
     if (params.get("modal") === "1") document.querySelector("[data-fixture-modal]").classList.remove("hidden");
     const visibleFixture = document.querySelector(`[data-fixture="${view}"]`);
     const canvas = document.querySelector(".draw-screen:not(.hidden) .canvas-wrap")?.getBoundingClientRect();
+    const drawScreen = document.querySelector(".draw-screen:not(.hidden)");
+    const drawStyle = drawScreen ? getComputedStyle(drawScreen) : null;
     const save = document.querySelector(".draw-screen:not(.hidden) #saveDrawing")?.getBoundingClientRect();
     const grid = view === "gallery" ? document.querySelector(".thumbnail-grid") : view === "detail" ? document.querySelector("#galleryContent") : document.querySelector(".draw-screen");
     const modal = document.querySelector(".modal-backdrop:not(.hidden) .modal");
@@ -55,6 +57,7 @@
       horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
       documentScroll: document.documentElement.scrollHeight > innerHeight,
       canvas: canvas ? [Math.round(canvas.width), Math.round(canvas.height)] : null,
+      drawContentWidth: drawScreen ? Math.round(drawScreen.clientWidth - parseFloat(drawStyle.paddingLeft) - parseFloat(drawStyle.paddingRight)) : null,
       colorCount: document.querySelectorAll("[data-colors] > .color").length,
       saveVisible: save ? save.bottom <= innerHeight : null,
       columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : null,

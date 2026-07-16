@@ -129,7 +129,7 @@ async function render(width, height, query) {
   throw new Error(`fixture did not render for ${width}x${height} ${query}`);
 }
 
-const viewports = [[320,568],[360,640],[375,667],[390,844],[412,915],[568,320],[667,375],[844,390],[768,1024],[820,1180],[1024,768],[1024,600],[1280,720],[1366,768],[1920,1080]];
+const viewports = [[320,568],[360,640],[360,800],[375,667],[390,844],[412,915],[568,320],[667,375],[844,390],[768,1024],[820,1180],[1024,1366],[1024,768],[1024,600],[1280,720],[1366,768],[1920,1080]];
 const boundaryHeights = [619,620,621,622,699,700,701,702];
 const results = [];
 const boundaryResults = [];
@@ -186,8 +186,11 @@ try {
   for (const [width, expected] of [[320, 3], [390, 3], [768, 4], [1024, 4], [1920, 5]]) {
     assert.equal((await render(width, 900, "view=gallery")).columns, expected, `${width}px gallery columns`);
   }
-  for (const [width, height] of [[360,640],[375,667],[390,844],[412,915],[1024,768],[1280,720]]) {
-    assert.equal((await render(width, height, "view=draw")).saveVisible, true, `${width}x${height} normal drawing view should expose save`);
+  for (const [width, height] of [[360,800],[390,844],[412,915],[768,1024],[820,1180],[1024,1366]]) {
+    const portrait = await render(width, height, "view=draw");
+    const expectedWidth = Math.min(portrait.drawContentWidth, 720);
+    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} portrait canvas must fill its drawing column`);
+    if (!portrait.saveVisible) assert.equal(portrait.documentScroll, true, `${width}x${height} portrait controls must remain reachable by document scroll`);
   }
   const longWord = await render(360, 640, "view=draw&long=1");
   assert.equal(longWord.horizontalOverflow, false, "long word must not overflow horizontally");

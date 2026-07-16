@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="stylesheet" href="../styles.css">
+  <title>CatchGallery responsive fixture</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="home-button">← <span>메인으로</span></button>
+      <button class="brand-button"><span class="logo-mark">🎨</span> 캐치갤러리</button>
+      <div class="score-chip">123456789점</div>
+    </header>
+    <main>
+      <section class="screen draw-screen" data-fixture="draw">
+        <div class="section-head"><div><h2>그림 그리기</h2><p class="muted">손가락으로 마음껏 그려요.</p></div><div class="word-actions"><button class="button ghost">다른 제시어</button><button class="button ghost">직접 제시어</button></div></div>
+        <div class="card word-card"><span class="category">아주 긴 카테고리</span><div class="word">접근성 설정에서도 잘리는 부분이 없는 긴 제시어</div></div>
+        <form class="custom-word-form hidden" data-custom-form><div class="custom-fields"><label>카테고리<input value="음식"></label><label>제시어<input value="계란프라이"></label></div><label class="answer-label">허용 정답<input value="달걀 프라이, 계란 후라이"></label><div class="answer-help">허용 정답 도움말이 길어져도 입력 필드와 버튼이 잘리지 않아야 합니다.</div><button class="button secondary full">이 제시어 사용하기</button></form>
+        <div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720"></canvas></div>
+        <div class="tools"><div class="colors" data-colors></div><div class="tool-grid"><input id="brushSize" type="range"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div>
+        <div class="notice">누군가 정답을 맞히면 그린 사람에게 30점이 들어와요.</div>
+        <button id="saveDrawing" class="button primary full">게시하기</button>
+      </section>
+      <section class="screen gallery-screen hidden" data-fixture="gallery"><h2>전시장</h2><p class="muted">그림을 감상해요.</p><div class="thumbnail-grid" data-thumbnails></div></section>
+      <section class="screen gallery-screen gallery-detail hidden" data-fixture="detail"><div id="galleryContent"><div class="frame"><div class="gallery-image-slot detail-slot"><div class="frame-image"></div></div></div><div class="frame-nav"><button class="button ghost">이전</button><span>1 / 3</span><button class="button ghost">다음</button></div><div class="frame-info"><button class="secret-word">제시어 보기</button><div class="meta"><span>그린 사람: 긴 닉네임</span><span>맞힌 사람: 긴 닉네임</span></div><button class="button secondary full">좋아요 12</button></div></div></section>
+    </main>
+  </div>
+  <div class="modal-backdrop hidden" data-fixture-modal><div class="modal"><h3>긴 확인 모달</h3><div data-modal-copy></div><div class="button-row"><button class="button ghost">취소</button><button class="button danger">확인</button></div></div></div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get("long") !== "1") {
+      document.querySelector(".word-card .category").textContent = "동물";
+      document.querySelector(".word-card .word").textContent = "고양이";
+    }
+    document.querySelector("[data-colors]").innerHTML = Array.from({ length: 8 }, (_, i) => `<button class="color${i === 0 ? " selected" : ""}" style="background:hsl(${i * 45} 70% 70%)"></button>`).join("");
+    document.querySelector("[data-thumbnails]").innerHTML = Array.from({ length: 10 }, (_, i) => `<div class="thumbnail-wrap"><button class="thumbnail"><div class="gallery-image-slot"></div><small>그린 사람 ${i + 1}</small></button></div>`).join("");
+    document.querySelector("[data-modal-copy]").innerHTML = Array.from({ length: 12 }, () => "<p>큰 글자와 짧은 화면에서도 내용을 스크롤할 수 있어야 합니다.</p>").join("");
+    const view = params.get("view") || "draw";
+    document.querySelectorAll("[data-fixture]").forEach(node => node.classList.toggle("hidden", node.dataset.fixture !== view));
+    if (params.get("custom") === "1") {
+      document.querySelector("[data-custom-form]").classList.remove("hidden");
+      document.querySelector(".draw-screen").classList.add("custom-word-open");
+    }
+    if (params.get("modal") === "1") document.querySelector("[data-fixture-modal]").classList.remove("hidden");
+    const visibleFixture = document.querySelector(`[data-fixture="${view}"]`);
+    const canvas = document.querySelector(".draw-screen:not(.hidden) .canvas-wrap")?.getBoundingClientRect();
+    const save = document.querySelector(".draw-screen:not(.hidden) #saveDrawing")?.getBoundingClientRect();
+    const grid = view === "gallery" ? document.querySelector(".thumbnail-grid") : view === "detail" ? document.querySelector("#galleryContent") : document.querySelector(".draw-screen");
+    const modal = document.querySelector(".modal-backdrop:not(.hidden) .modal");
+    document.body.dataset.metrics = encodeURIComponent(JSON.stringify({
+      viewport: [innerWidth, innerHeight],
+      horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+      documentScroll: document.documentElement.scrollHeight > innerHeight,
+      canvas: canvas ? [Math.round(canvas.width), Math.round(canvas.height)] : null,
+      saveVisible: save ? save.bottom <= innerHeight : null,
+      columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : null,
+      modal: modal ? { clientHeight: modal.clientHeight, scrollHeight: modal.scrollHeight } : null,
+      fixtureHeight: visibleFixture?.getBoundingClientRect().height || 0
+    }));
+  </script>
+</body>
+</html>

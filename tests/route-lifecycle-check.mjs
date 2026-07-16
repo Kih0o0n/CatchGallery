@@ -7,11 +7,12 @@ const cleanupSource = app.match(/function cleanupScreenResources[\s\S]*?(?=funct
 const transitionSource = app.match(/function transitionRoute[\s\S]*?(?=function route\()/)?.[0];
 const loaderSource = app.match(/function createGalleryLoader[\s\S]*?(?=function observeGalleryThumbnails)/)?.[0];
 const setupCanvasSource = app.match(/function setupCanvas[\s\S]*?(?=function undoCanvas)/)?.[0];
+const canvasGestureMathSource = app.match(/function clampCanvasZoom[\s\S]*?(?=function sameCanvasPoint)/)?.[0];
 const galleryRenderSource = app.match(/async function renderGallery[\s\S]*?(?=async function adminDeleteDrawing)/)?.[0];
 const solveRenderSource = app.match(/async function renderSolve[\s\S]*?(?=function openDrawingCard)/)?.[0];
 const moveGallerySource = app.match(/function moveGalleryIndex[\s\S]*?(?=function bindGalleryContent)/)?.[0];
 const confirmModalSource = app.match(/function confirmModal[\s\S]*?(?=function showAnswerSuccessModal)/)?.[0];
-assert.ok(requestSource && cleanupSource && transitionSource && loaderSource && setupCanvasSource && galleryRenderSource && solveRenderSource && moveGallerySource && confirmModalSource);
+assert.ok(requestSource && cleanupSource && transitionSource && loaderSource && setupCanvasSource && canvasGestureMathSource && galleryRenderSource && solveRenderSource && moveGallerySource && confirmModalSource);
 
 function deferred() {
   let resolve, reject;
@@ -96,12 +97,13 @@ function deferred() {
   let image;
   let draws = 0;
   const context = { lineCap: "", lineJoin: "", globalCompositeOperation: "", strokeStyle: "", lineWidth: 0, drawImage: () => draws++ };
-  const canvas = { isConnected: true, getContext: () => context, addEventListener: () => {}, removeEventListener: () => {} };
+  const viewport = { clientWidth: 360, clientHeight: 360, clientLeft: 0, clientTop: 0, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  const canvas = { isConnected: true, clientWidth: 360, clientHeight: 360, style: {}, closest: () => viewport, getContext: () => context, addEventListener: () => {}, removeEventListener: () => {} };
   const state = { route: "draw", canvas: null, ctx: null, history: [], dirty: false, activePointerId: null, editImageRequestId: 0 };
   class TestImage { set src(value) { this.value = value; image = this; } }
   const eventTarget = { addEventListener: () => {}, removeEventListener: () => {} };
   const document = { ...eventTarget, visibilityState: "visible", querySelector: selector => selector === "#drawingCanvas" ? canvas : { value: 9 } };
-  const setupCanvas = Function("state", "document", "window", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${setupCanvasSource}; return setupCanvas;`)(
+  const setupCanvas = Function("state", "document", "window", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${canvasGestureMathSource}; ${setupCanvasSource}; return setupCanvas;`)(
     state, document, eventTarget, () => {}, () => {}, () => {}, () => {}, () => { state.historyBaseCanvas = canvas; state.historyBaseContext = context; }, () => ({ x: 0, y: 0 }), () => {}, () => {}, () => {}, () => {}, () => true, () => true, () => false, TestImage, 1, () => true, { warn: () => {} }
   );
   setupCanvas("data:image/png;base64,x");

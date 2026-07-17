@@ -125,7 +125,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   canvas.throwSetCapture = throwSetCapture;
   canvas.throwReleaseCapture = throwReleaseCapture;
   const windowTarget = fakeEventTarget();
-  let drawingQueries = 0, brushQueries = 0, image;
+  let drawingQueries = 0, brushQueries = 0, touchSessionClears = 0, image;
   const warnings = [];
   const state = { route: "draw", canvas: null, ctx: null, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyBaseHasContent: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, canvasInputCleanup: null, drawing: false, activePointerId: null, dirty: false, editImageRequestId: 0 };
   const documentEvents = fakeEventTarget();
@@ -141,11 +141,11 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   windowTarget.visualViewport = fakeEventTarget();
   windowTarget.requestAnimationFrame = callback => { frameCallback = callback; return 1; };
   windowTarget.cancelAnimationFrame = () => { frameCallback = null; };
-  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
-    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
+  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "clearCanvasTouchSession", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
+    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
-  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries }) };
+  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears }) };
 }
 function assertPointerMetadataCleared(state) {
   assert.equal(state.activePointerId, null);
@@ -173,6 +173,7 @@ function assertPointerMetadataCleared(state) {
 
 {
   const h = setupHarness();
+  const clearsAtStart = h.counts().touchSessionClears;
   const touchStart = h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
   const touchMove = h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
   assert.equal(touchStart.prevented, true, "touch drawing blocks the browser gesture only on the canvas input");
@@ -191,15 +192,38 @@ function assertPointerMetadataCleared(state) {
   assert.match(h.canvas.style.transform, /^translate\(/);
   h.canvas.emit("pointerup", { pointerId: 60, pointerType: "touch" });
   assert.equal(h.state.canvasGestureActive, false);
+  assert.equal(h.counts().touchSessionClears, clearsAtStart, "one remaining gesture touch keeps the touch session lock");
   h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 320, clientY: 90 });
   h.canvas.emit("pointerdown", { pointerId: 62, pointerType: "touch", isPrimary: false, clientX: 100, clientY: 100 });
   assert.equal(h.state.history.length, 0, "remaining and third gesture touches cannot draw");
   h.canvas.emit("pointerup", { pointerId: 61, pointerType: "touch" });
   h.canvas.emit("pointercancel", { pointerId: 62, pointerType: "touch" });
   assert.equal(h.state.canvasGestureSuppressedPointers.size, 0);
+  assert.ok(h.counts().touchSessionClears > clearsAtStart, "the final gesture pointer clears the touch session lock");
   h.canvas.emit("pointerdown", { pointerId: 63, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
   h.canvas.emit("pointerup", { pointerId: 63, pointerType: "touch" });
   assert.equal(h.state.history.length, 1, "a fresh touch can draw after every gesture finger ends");
+}
+
+for (const interruptType of ["blur", "pagehide"]) {
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 80, pointerType: "touch" });
+  const before = h.counts().touchSessionClears;
+  h.window.emit(interruptType);
+  assert.ok(h.counts().touchSessionClears > before, `${interruptType} clears the touch session lock`);
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 81, pointerType: "touch" });
+  const before = h.counts().touchSessionClears;
+  h.document.visibilityState = "hidden";
+  h.document.emit("visibilitychange");
+  assert.ok(h.counts().touchSessionClears > before, "hidden visibility clears the touch session lock");
+  const beforeRelease = h.counts().touchSessionClears;
+  h.releaseCanvasHistory();
+  h.releaseCanvasHistory();
+  assert.ok(h.counts().touchSessionClears >= beforeRelease + 2, "repeated release cleanup safely clears the touch session each time");
 }
 
 {

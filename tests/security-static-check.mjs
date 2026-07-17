@@ -66,6 +66,7 @@ assert.match(app, /type:\s*"solver"/);
 assert.match(app, /type:\s*"drawer"/);
 assert.doesNotMatch(app, /그린 사람: \$\{escapeHtml\(drawerName\(d\)\)\}<\/span><\/div>\$\{mine/, "open cards must hide drawer nickname");
 assert.match(app, /addEventListener\("touchmove"/);
+assert.match(app, /addEventListener\("touchstart"/);
 assert.match(app, /addEventListener\("pointerdown"/);
 assert.match(app, /addEventListener\("pointercancel"/);
 assert.match(app, /activePointerId/);

@@ -43,7 +43,7 @@ function deferred() {
     editImageRequestId: 4, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 7, dirty: true, activeSaveOperationId: 9, publishing: true
   };
-  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", "releaseCanvasHistory", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {}, () => { state.history = []; state.drawing = false; state.activePointerId = null; });
+  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {}, () => {}, () => { state.history = []; state.drawing = false; state.activePointerId = null; });
   cleanup();
   cleanup();
   assert.equal(disconnected, 1, "IntersectionObserver must be disconnected once and cleared");
@@ -264,7 +264,8 @@ for (const outcome of ["resolve", "reject"]) {
 assert.match(app, /window\.addEventListener\("popstate"[\s\S]{0,220}transitionRoute\(/, "popstate must use the common transition flow");
 assert.match(transitionSource, /galleryDetail === true[\s\S]*galleryIndex/, "gallery detail history must restore its saved index");
 assert.match(app, /async function renderGallery\(force = false\)/, "renderGallery(force) must preserve its boolean interface");
-for (const name of ["renderSolve", "renderRanking", "renderManage", "renderFeedback"]) assert.match(app, new RegExp(`async function ${name}\\(\\)`));
+for (const name of ["renderSolve", "renderRanking", "renderManage"]) assert.match(app, new RegExp(`async function ${name}\\(\\)`));
+assert.match(app, /async function renderFeedback\([^)]*\)/);
 assert.match(app, /startNewDrawing\(\{ preserveSeenWords: true \}\)/, "continuous drawing must preserve seen prompts");
 
 console.log("Route lifecycle regression checks passed.");

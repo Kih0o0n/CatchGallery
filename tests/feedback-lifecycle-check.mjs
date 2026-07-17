@@ -61,9 +61,8 @@ function makeState() {
 {
   const state = makeState();
   let reads = 0;
-  let resolveBody;
-  const bodyGate = new Promise(resolve => { resolveBody = resolve; });
-  const db = { ref() { return { once() { reads++; return bodyGate; } }; } };
+  const responses = [];
+  const db = { ref() { return { once() { reads++; return Promise.resolve(valueSnapshot(responses.shift())); } }; } };
   const isFeedbackContextCurrent = context => context.uid === state.user.id && context.generation === state.cacheGeneration;
   const feedbackCanRead = Function("state", `${pick("feedbackCanRead")}; return feedbackCanRead;`)(state);
   const loadFeedbackBody = Function("state", "db", "feedbackCanRead", "isFeedbackContextCurrent", `${pick("loadFeedbackBody")}; return loadFeedbackBody;`)(state, db, feedbackCanRead, isFeedbackContextCurrent);
@@ -71,14 +70,24 @@ function makeState() {
   assert.equal(await loadFeedbackBody({ id: "locked", isSecret: true, isMine: false, hidden: false, deleted: false }, context), null);
   assert.equal(reads, 0, "unreadable secret content never reaches Firebase");
   const meta = { id: "public", isSecret: false, isMine: false, hidden: false, deleted: false };
+  responses.push({ content: "정상 본문 내용" });
   const first = loadFeedbackBody(meta, context);
   const simultaneous = loadFeedbackBody(meta, context);
   assert.equal(first, simultaneous, "same body shares its Promise");
   assert.equal(reads, 1);
-  resolveBody(valueSnapshot({ content: "본문 내용" }));
-  assert.deepEqual(await first, { content: "본문 내용" });
-  assert.deepEqual(await loadFeedbackBody(meta, context), { content: "본문 내용" });
+  assert.deepEqual(await first, { content: "정상 본문 내용" });
+  assert.deepEqual(await loadFeedbackBody(meta, context), { content: "정상 본문 내용" });
   assert.equal(reads, 1, "body LRU prevents rereads");
+
+  for (const [id, invalid] of [["missing", null], ["scalar", "broken"], ["no-content", { adminReply: "답변" }]]) {
+    responses.push(invalid);
+    await assert.rejects(loadFeedbackBody({ ...meta, id }, context), /feedback-content-invalid/);
+    assert.equal(state.feedbackBodyCache.has(id), false, `${id} is not cached as an empty body`);
+    assert.equal(state.feedbackBodyPromises.has(id), false, `${id} clears its rejected Promise for retry`);
+  }
+  responses.push(null, { content: "재시도 본문" });
+  await assert.rejects(loadFeedbackBody({ ...meta, id: "retry" }, context), /feedback-content-invalid/);
+  assert.deepEqual(await loadFeedbackBody({ ...meta, id: "retry" }, context), { content: "재시도 본문" }, "retry starts a fresh Firebase read");
 }
 
 {
@@ -108,20 +117,45 @@ function makeState() {
 
 {
   const state = makeState();
-  let finish;
-  const gate = new Promise(resolve => { finish = resolve; });
+  let currentRequest = 1;
   const isCacheSessionCurrent = (uid, generation) => state.user?.id === uid && state.cacheOwnerUid === uid && state.cacheGeneration === generation;
-  const isScreenRequestCurrent = () => state.route === "feedback";
+  const isScreenRequestCurrent = request => state.route === "feedback" && request.id === currentRequest;
   const code = ["feedbackOperationContext", "isFeedbackContextCurrent", "feedbackPendingKey", "beginFeedbackPending", "endFeedbackPending", "performFeedbackOperation"].map(name => name === "performFeedbackOperation" ? `async ${pick(name)}` : pick(name)).join("\n");
   const api = Function("state", "isCacheSessionCurrent", "isScreenRequestCurrent", `${code}; return { performFeedbackOperation, feedbackPendingKey };`)(state, isCacheSessionCurrent, isScreenRequestCurrent);
-  const first = api.performFeedbackOperation("edit", "post", {}, () => gate);
+  let finish;
+  const gate = new Promise(resolve => { finish = resolve; });
+  const first = api.performFeedbackOperation("edit", "post", { id: 1 }, () => gate);
   const duplicate = await api.performFeedbackOperation("edit", "post", {}, async () => "duplicate");
   assert.equal(duplicate.duplicate, true, "the same pending operation cannot execute twice");
+  currentRequest = 2;
+  finish("saved");
+  assert.deepEqual(await first, { ok: true, value: "saved", refresh: true }, "sort/tab rerender keeps same-session success and requests a fresh screen render");
+  assert.equal(state.feedbackPending.size, 0, "same-session completion always clears pending");
+
+  let rejectEdit;
+  const failed = api.performFeedbackOperation("edit", "post", { id: 2 }, () => new Promise((_, reject) => { rejectEdit = reject; }));
+  currentRequest = 3;
+  rejectEdit(new Error("save failed"));
+  const failedResult = await failed;
+  assert.equal(failedResult.error.message, "save failed");
+  assert.equal(failedResult.refresh, true, "stale-request failure restores the latest sort/tab screen");
+  assert.equal(state.feedbackPending.size, 0, "failed operation always clears pending so no processing label remains");
+
+  let finishOldAccount;
+  const oldAccount = api.performFeedbackOperation("reaction", "other", { id: 3 }, () => new Promise(resolve => { finishOldAccount = resolve; }));
   state.user = { id: "user-b" }; state.cacheOwnerUid = "user-b"; state.cacheGeneration = 2;
-  state.feedbackPending = new Map([[api.feedbackPendingKey("edit", "post"), { owner: "b" }]]);
-  finish("late-a");
-  assert.equal((await first).stale, true);
-  assert.equal(state.feedbackPending.has(api.feedbackPendingKey("edit", "post")), true, "old completion cannot clear the new user's pending operation");
+  state.feedbackPending = new Map([[api.feedbackPendingKey("reaction", "other"), { owner: "b" }]]);
+  finishOldAccount("late-a");
+  assert.equal((await oldAccount).stale, true, "account changes block old results and therefore their toast/render path");
+  assert.equal(state.feedbackPending.has(api.feedbackPendingKey("reaction", "other")), true, "old completion cannot clear the new user's pending operation");
+
+  state.user = { id: "user-b" }; state.cacheOwnerUid = "user-b"; state.cacheGeneration = 2; state.feedbackPending.clear(); state.route = "feedback"; currentRequest = 4;
+  let finishAfterLeave;
+  const afterLeave = api.performFeedbackOperation("hide", "post", { id: 4 }, () => new Promise(resolve => { finishAfterLeave = resolve; }));
+  state.route = "gallery";
+  finishAfterLeave(true);
+  assert.equal((await afterLeave).stale, true, "leaving feedback blocks its toast and screen rerender path");
+  assert.equal(state.feedbackPending.size, 0);
 }
 
 {
@@ -152,5 +186,11 @@ assert.match(rules.feedbackReactions.$feedbackId.$uid[".write"], /isSecret'\)\.v
 assert.match(rules.feedbackReactions.$feedbackId.$uid[".write"], /hidden'\)\.val\(\) === false/);
 assert.match(rules.feedbackOwners.$feedbackId.$uid[".write"], /!newData\.exists\(\)/);
 assert.match(rules.feedbackMeta.$feedbackId[".write"], /!root\.child\('feedbackContent'\)/);
+const contentWrite = rules.feedbackContent.$feedbackId[".write"];
+assert.match(contentWrite, /data\.exists\(\) && newData\.exists\(\) && newData\.hasChild\('content'\)/, "owner updates require a complete surviving body node");
+assert.match(contentWrite, /newData\.child\('adminReply'\)\.val\(\) === data\.child\('adminReply'\)\.val\(\)/, "owners preserve administrator reply fields");
+assert.match(contentWrite, /!data\.exists\(\).*newData\.child\('adminReply'\)/, "normal first body creation remains available without admin fields");
+assert.match(contentWrite, /root\.child\('admins'\).*newData\.child\('content'\)\.val\(\) === data\.child\('content'\)\.val\(\)/, "administrator reply creation and edits preserve the body text");
+assert.match(rules.feedbackMeta.$feedbackId[".write"], /newData\.exists\(\) \|\| !root\.child\('feedbackContent'\)/, "only metadata without a completed content node can use incomplete cleanup");
 
 console.log("Feedback lifecycle cache checks passed.");

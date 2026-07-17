@@ -102,6 +102,7 @@ assert.match(rules.feedbackReactions.$feedbackId.$uid[".write"], /hidden'\)\.val
 assert.match(rules.feedbackOwners.$feedbackId.$uid[".write"], /!newData\.exists\(\)/, "incomplete owner cleanup must be explicit");
 assert.match(rules.feedbackOwners.$feedbackId.$uid[".write"], /!root\.child\('feedbackContent'\)/, "completed posts must block cleanup deletion");
 assert.match(rules.feedbackMeta.$feedbackId[".write"], /newData\.exists\(\) \|\| !root\.child\('feedbackContent'\)/, "owners may hard-delete only incomplete metadata");
+assert.match(rules.feedbackContent.$feedbackId[".write"], /data\.exists\(\) && newData\.exists\(\) && newData\.hasChild\('content'\)/, "owners cannot hard-delete a completed feedback body");
 assert.match(app, /maxlength="300" placeholder="운영자 답변"/);
 assert.match(rules.scoreClaims.$uid.$drawingId[".write"], /solverReward/);
 assert.match(rules.scoreClaims.$uid.$drawingId[".write"], /drawerReward/);

@@ -2858,7 +2858,8 @@ function loadFeedbackBody(meta, context) {
   if (existing?.uid === context.uid && existing.generation === context.generation) return existing.promise;
   const promise = db.ref(`feedbackContent/${meta.id}`).once("value").then(snapshot => {
     const content = snapshot.val();
-    if (content && isFeedbackContextCurrent(context)) state.feedbackBodyCache.set(meta.id, content);
+    if (!content || typeof content !== "object" || Array.isArray(content) || typeof content.content !== "string" || content.content.length < 6 || content.content.length > 300) throw new Error("feedback-content-invalid");
+    if (isFeedbackContextCurrent(context)) state.feedbackBodyCache.set(meta.id, content);
     return content;
   });
   const record = { uid: context.uid, generation: context.generation, promise: null };
@@ -2962,9 +2963,11 @@ async function performFeedbackOperation(type, id, request, operation) {
   if (!pendingKey) return { ok: false, duplicate: true };
   try {
     const value = await operation(context);
-    return isFeedbackContextCurrent(context, true) ? { ok: true, value } : { ok: false, stale: true };
+    if (!isFeedbackContextCurrent(context) || state.route !== "feedback") return { ok: false, stale: true };
+    return { ok: true, value, refresh: !isScreenRequestCurrent(request) };
   } catch (error) {
-    return isFeedbackContextCurrent(context, true) ? { ok: false, error } : { ok: false, stale: true };
+    if (!isFeedbackContextCurrent(context) || state.route !== "feedback") return { ok: false, stale: true };
+    return { ok: false, error, refresh: !isScreenRequestCurrent(request) };
   } finally { endFeedbackPending(pendingKey); }
 }
 function bindFeedback(list, request = beginScreenRequest("feedback")) {
@@ -2988,7 +2991,8 @@ function bindFeedback(list, request = beginScreenRequest("feedback")) {
       renderFeedback(true);
     } else if (result.error) {
       showToast(userErrorMessage(result.error, "의견을 저장하지 못했어요. 입력한 내용은 그대로 있으니 다시 시도해 주세요."));
-      if (button.isConnected) { button.disabled = false; button.textContent = originalText; }
+      if (result.refresh) renderFeedback(true);
+      else if (button.isConnected) { button.disabled = false; button.textContent = originalText; }
     }
   };
   document.querySelector("#cancelFeedbackEdit")?.addEventListener("click", () => { state.editingFeedback = null; renderFeedback(true); });
@@ -2997,26 +3001,26 @@ function bindFeedback(list, request = beginScreenRequest("feedback")) {
   document.querySelectorAll("[data-react]").forEach(button => button.onclick = async () => {
     const result = await performFeedbackOperation("reaction", button.dataset.id, request, context => toggleFeedbackReaction(button.dataset.id, button.dataset.react, context));
     if (result.ok) { showToast(result.value ? `${result.value === "like" ? "좋아요" : "싫어요"}를 눌렀어요.` : "반응을 취소했어요."); renderFeedback(true); }
-    else if (result.error) showToast(userErrorMessage(result.error));
+    else if (result.error) { showToast(userErrorMessage(result.error)); if (result.refresh) renderFeedback(true); }
   });
   document.querySelectorAll("[data-edit-feedback]").forEach(button => button.onclick = () => { const feedback = list.find(item => item.id === button.dataset.editFeedback); if (!feedback?.content) return; state.editingFeedback = { id: feedback.id, content: feedback.content.content || "" }; renderFeedback(true); });
   document.querySelectorAll("[data-delete-feedback]").forEach(button => button.onclick = () => confirmModal("이 의견을 정말 삭제할까요?", "삭제하면 다시 되돌릴 수 없고 목록에서도 보이지 않습니다.", async () => {
     const result = await performFeedbackOperation("delete", button.dataset.deleteFeedback, request, context => deleteFeedback(button.dataset.deleteFeedback, context));
     if (result.ok) { showToast("의견을 삭제했어요."); renderFeedback(true); }
-    else if (result.error) showToast(userErrorMessage(result.error));
+    else if (result.error) { showToast(userErrorMessage(result.error)); if (result.refresh) renderFeedback(true); }
   }));
   document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => {
     const id = button.dataset.adminReply;
     const reply = document.querySelector(`[data-reply-text="${id}"]`).value;
     const result = await performFeedbackOperation("reply", id, request, context => saveAdminReply(id, reply, context));
     if (result.ok) { showToast("답변을 저장했어요."); renderFeedback(true); }
-    else if (result.error) showToast(userErrorMessage(result.error));
+    else if (result.error) { showToast(userErrorMessage(result.error)); if (result.refresh) renderFeedback(true); }
   });
   document.querySelectorAll("[data-admin-hide]").forEach(button => button.onclick = async () => {
     const id = button.dataset.adminHide;
     const result = await performFeedbackOperation("hide", id, request, context => toggleFeedbackHidden(id, button.dataset.hidden !== "true", context));
     if (result.ok) renderFeedback(true);
-    else if (result.error) showToast(userErrorMessage(result.error));
+    else if (result.error) { showToast(userErrorMessage(result.error)); if (result.refresh) renderFeedback(true); }
   });
 }
 

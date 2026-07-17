@@ -216,6 +216,11 @@ input[type="range"] { padding: 0; accent-color: var(--pink); }
 @keyframes sparkle { to { transform: translateY(-3px) scale(1.08); filter: brightness(1.08); } }
 .loading { display: grid; place-items: center; min-height: 250px; color: var(--muted); }.loading::before { content: '🎨'; font-size: 45px; animation: bob .8s infinite alternate; }
 @keyframes bob { to { transform: translateY(-8px) rotate(5deg); } }
+html.canvas-touch-session-lock,
+body.canvas-touch-session-lock {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
 .canvas-wrap,
 #drawingCanvas {
   overscroll-behavior: none !important;

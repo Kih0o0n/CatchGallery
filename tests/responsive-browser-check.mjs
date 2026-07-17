@@ -229,15 +229,28 @@ try {
       const state = { route: "draw", canvas, canvasTouchIdentifiers: new Set(), activePointerId: null, canvasGestureActive: false, canvasGesturePointers: new Map(), canvasGestureSuppressedPointers: new Set() };
       ${touchLockSource}
       bindDocumentDrawingScrollBlocker();
-      window.__canvasTouchTest = { state, clearCanvasTouchSession };
+      const eventOrder = [];
+      canvas.addEventListener("pointerdown", event => {
+        if (event.pointerType !== "touch") return;
+        lockCanvasTouchSession();
+        eventOrder.push({ type: "pointerdown", locked: !!state.canvasTouchLock, identifiers: state.canvasTouchIdentifiers.size, savedScrollY: state.canvasTouchLock?.scrollY });
+      }, { passive: false });
+      document.addEventListener("touchstart", () => {
+        eventOrder.push({ type: "touchstart", locked: !!state.canvasTouchLock, identifiers: state.canvasTouchIdentifiers.size, savedScrollY: state.canvasTouchLock?.scrollY });
+      }, { passive: false, capture: true });
+      window.__canvasTouchTest = { state, clearCanvasTouchSession, eventOrder };
       const rect = canvas.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, canvasTop: rect.top, scrollY };
     })()`, returnByValue: true
   });
   const touch = touchSetup.result.value;
   await command("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touch.x, y: touch.y, id: 1, radiusX: 2, radiusY: 2, force: 1 }] });
-  const lockedState = await command("Runtime.evaluate", { expression: `({ scrollY, savedScrollY: window.__canvasTouchTest.state.canvasTouchLock?.scrollY, canvasTop: document.querySelector("#drawingCanvas").getBoundingClientRect().top, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
+  const lockedState = await command("Runtime.evaluate", { expression: `({ scrollY, savedScrollY: window.__canvasTouchTest.state.canvasTouchLock?.scrollY, canvasTop: document.querySelector("#drawingCanvas").getBoundingClientRect().top, locked: document.body.classList.contains("canvas-touch-session-lock"), eventOrder: window.__canvasTouchTest.eventOrder })`, returnByValue: true });
   assert.equal(lockedState.result.value.locked, true, "mobile touchstart must apply the strong canvas lock");
+  assert.deepEqual(lockedState.result.value.eventOrder.map(entry => entry.type), ["pointerdown", "touchstart"], "CDP touch input must lock on pointerdown before touchstart handoff");
+  assert.equal(lockedState.result.value.eventOrder[0].identifiers, 0, "pointerdown locks before Touch Events register identifiers");
+  assert.equal(lockedState.result.value.eventOrder[1].identifiers, 1, "touchstart registers the identifier after the early lock");
+  assert.equal(lockedState.result.value.eventOrder[0].savedScrollY, lockedState.result.value.eventOrder[1].savedScrollY, "touchstart cannot overwrite pointerdown scroll state");
   assert.equal(lockedState.result.value.savedScrollY, touch.scrollY, "locking must retain the original scroll position for restoration");
   assert.ok(Math.abs(lockedState.result.value.canvasTop - touch.canvasTop) <= 1, "locking must preserve the visible canvas position");
   await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: touch.x, y: touch.y - 120, id: 1, radiusX: 2, radiusY: 2, force: 1 }] });

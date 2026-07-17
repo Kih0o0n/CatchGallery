@@ -43,7 +43,7 @@ const code = [
   pick("lockCanvasTouchSession"), pick("clearCanvasTouchSession"), pick("canvasTouchPointersIdle"), pick("scheduleCanvasTouchFallbackCleanup"),
   pick("eventTargetsCanvas"), pick("changedTouchIdentifiers"), pick("bindDocumentDrawingScrollBlocker")
 ].join("\n");
-const api = Function("state", "document", "window", `${code}; return { bindDocumentDrawingScrollBlocker, clearCanvasTouchSession, scheduleCanvasTouchFallbackCleanup };`)(state, document, window);
+const api = Function("state", "document", "window", `${code}; return { bindDocumentDrawingScrollBlocker, lockCanvasTouchSession, clearCanvasTouchSession, scheduleCanvasTouchFallbackCleanup };`)(state, document, window);
 api.bindDocumentDrawingScrollBlocker();
 
 for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "gesturestart"]) {
@@ -65,13 +65,18 @@ listeners.get("touchstart")(outsideStart);
 assert.equal(outsideStart.prevented, false, "touches starting outside the canvas keep normal page scrolling");
 assert.equal(locked(), false);
 
+assert.equal(api.lockCanvasTouchSession(), true, "the first accepted touch pointer can lock before touchstart");
+assert.equal(api.scheduleCanvasTouchFallbackCleanup(), true, "an early pointer-only lock has a safety fallback");
+window.scrollX = 30; window.scrollY = 360;
 const firstStart = touchEvent({ target: { outside: true }, changed: [1], path: [{}, canvas, document] });
 listeners.get("touchstart")(firstStart);
+assert.equal(timers.size, 0, "touchstart handoff cancels the pointer-only fallback");
 assert.equal(firstStart.prevented, true, "canvas touchstart is cancelled immediately");
 assert.equal(locked(), true);
 assert.deepEqual([...state.canvasTouchIdentifiers], [1]);
 assert.deepEqual(state.history, [], "Touch Events never add strokes or history actions");
 assert.deepEqual(state.canvasTouchLock, { scrollX: 12, scrollY: 240, bodyStyle: { position: "relative", top: "1px", left: "2px", right: "3px", width: "90%" } });
+assert.equal(api.lockCanvasTouchSession(), false, "touchstart handoff and additional pointers cannot resave lock state");
 assert.deepEqual(document.body.style, { position: "fixed", top: "-240px", left: "-12px", right: "0px", width: "100%" });
 
 const secondStart = touchEvent({ target: { outside: true }, changed: [2] });
@@ -119,6 +124,18 @@ assert.equal(state.canvasTouchIdentifiers.size, 0);
 assert.equal(locked(), false, "route/release cleanup is idempotent");
 assert.deepEqual(scrollCalls.at(-1), [0, 700]);
 
+window.scrollX = 0; window.scrollY = 900;
+assert.equal(api.lockCanvasTouchSession(), true);
+window.scrollY = 0;
+assert.equal(state.canvasTouchIdentifiers.size, 0, "early pointer lock may exist before touchstart identifiers arrive");
+assert.equal(api.scheduleCanvasTouchFallbackCleanup(), true, "pointer-only sessions still schedule fallback cleanup");
+const fallback = [...timers.values()][0];
+fallback();
+assert.equal(locked(), false);
+assert.deepEqual(scrollCalls.at(-1), [0, 900], "missing touchstart is restored exactly once by pointer fallback");
+api.clearCanvasTouchSession();
+assert.equal(scrollCalls.filter(([, y]) => y === 900).length, 1);
+
 const lockCss = styles.match(/html\.canvas-touch-session-lock,[\s\S]*?\}/)?.[0] || "";
 assert.match(lockCss, /overflow:\s*hidden/);
 assert.match(lockCss, /overscroll-behavior:\s*none/);
@@ -130,6 +147,9 @@ assert.match(setupSource, /window\.addEventListener\("blur", interrupt\)/);
 assert.match(setupSource, /window\.addEventListener\("pagehide", interrupt\)/);
 assert.match(setupSource, /visibilityState === "hidden"/);
 assert.match(setupSource, /scheduleCanvasTouchFallbackCleanup/);
+const startSource = setupSource.match(/const start = event => \{[\s\S]*?\r?\n  \};\r?\n  const move/)?.[0] || "";
+assert.ok(startSource, "setupCanvas pointerdown handler must be extractable");
+assert.ok(startSource.indexOf("lockCanvasTouchSession()") < startSource.indexOf("viewportPoint(event)"), "pointerdown must lock before viewport or canvas coordinate reads");
 assert.match(source.match(/function releaseCanvasHistory[\s\S]*?(?=function initializeCanvasHistory)/)?.[0] || "", /clearCanvasTouchSession/);
 assert.match(source.match(/function cleanupScreenResources[\s\S]*?(?=function transitionRoute)/)?.[0] || "", /releaseCanvasHistory/);
 

@@ -51,6 +51,8 @@
     const drawStyle = drawScreen ? getComputedStyle(drawScreen) : null;
     const save = document.querySelector(".draw-screen:not(.hidden) #saveDrawing")?.getBoundingClientRect();
     const palette = document.querySelector(".draw-screen:not(.hidden) .drawing-palette")?.getBoundingClientRect();
+    const colors = document.querySelector(".draw-screen:not(.hidden) .colors")?.getBoundingClientRect();
+    const eraser = document.querySelector(".draw-screen:not(.hidden) #eraser")?.getBoundingClientRect();
     const controls = document.querySelector(".draw-screen:not(.hidden) .tool-grid")?.getBoundingClientRect();
     const grid = view === "gallery" ? document.querySelector(".thumbnail-grid") : view === "detail" ? document.querySelector("#galleryContent") : document.querySelector(".draw-screen");
     const modal = document.querySelector(".modal-backdrop:not(.hidden) .modal");
@@ -62,6 +64,8 @@
       canvas: canvas ? [Math.round(canvas.width), Math.round(canvas.height)] : null,
       canvasRect: canvas ? { left: canvas.left, right: canvas.right, top: canvas.top, bottom: canvas.bottom } : null,
       paletteRect: palette ? { left: palette.left, right: palette.right, top: palette.top, bottom: palette.bottom } : null,
+      colorsRect: colors ? { left: colors.left, right: colors.right, top: colors.top, bottom: colors.bottom } : null,
+      eraserRect: eraser ? { left: eraser.left, right: eraser.right, top: eraser.top, bottom: eraser.bottom } : null,
       controlsRect: controls ? { left: controls.left, right: controls.right, top: controls.top, bottom: controls.bottom } : null,
       drawContentWidth: drawScreen ? Math.round(drawScreen.clientWidth - parseFloat(drawStyle.paddingLeft) - parseFloat(drawStyle.paddingRight)) : null,
       colorCount: document.querySelectorAll("[data-colors] > .color").length,

@@ -167,16 +167,25 @@ try {
     assert.equal(metrics.horizontalOverflow, false, `${width}x${height} must not overflow horizontally`);
     assert.ok(Math.abs(metrics.canvas[0] - metrics.canvas[1]) <= 1, `${width}x${height} canvas must remain square`);
     assert.ok(metrics.canvas[0] <= 720, `${width}x${height} canvas must not exceed 720 CSS px`);
-    if (width > height && width >= 640) {
+    if (width > height && width >= 540) {
       assert.ok(metrics.paletteRect.right <= metrics.canvasRect.left, `${width}x${height} palette must be left of the canvas`);
       assert.ok(metrics.controlsRect.left >= metrics.canvasRect.right, `${width}x${height} brush, undo, and clear controls must be right of the canvas`);
       assert.ok(metrics.paletteRect.bottom <= metrics.documentHeight + 1, `${width}x${height} palette must remain reachable by viewport or document scroll`);
+      assert.ok(metrics.eraserRect && metrics.eraserRect.top >= metrics.colorsRect.bottom && metrics.eraserRect.bottom <= metrics.documentHeight + 1, `${width}x${height} eraser must remain directly below the colors and reachable`);
     } else if (height >= width) {
       assert.ok(metrics.paletteRect.top >= metrics.canvasRect.bottom, `${width}x${height} portrait tools must remain below the canvas`);
     }
     if (!metrics.saveVisible) assert.equal(metrics.documentScroll, true, `${width}x${height} must scroll when save is below the fold`);
     results.push({ viewport: `${width}x${height}`, ...metrics });
   }
+  const narrowLandscape = results.find(result => result.viewport[0] === 568 && result.viewport[1] === 320);
+  assert.ok(narrowLandscape, "568x320 must be part of the real Chrome viewport matrix");
+  assert.equal(narrowLandscape.horizontalOverflow, false);
+  assert.equal(narrowLandscape.colorCount, 15);
+  assert.ok(narrowLandscape.eraserRect);
+  assert.ok(narrowLandscape.paletteRect.right <= narrowLandscape.canvasRect.left);
+  assert.ok(narrowLandscape.controlsRect.left >= narrowLandscape.canvasRect.right);
+  assert.ok(narrowLandscape.paletteRect.bottom <= narrowLandscape.documentHeight + 1, "568x320 colors and eraser remain reachable");
   for (const height of boundaryHeights) {
     const metrics = await render(360, height, "view=draw");
     assert.equal(metrics.horizontalOverflow, false, `360x${height} must not overflow horizontally`);

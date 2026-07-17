@@ -132,6 +132,8 @@ assert.doesNotMatch(styles, /100dvh\s*-\s*61px|100dvh\s*-\s*375px/);
 assert.match(styles, /\.app-shell\s*\{[^}]*max-width:\s*1180px/);
 assert.match(styles, /\.canvas-wrap\s*\{[^}]*max-width:\s*720px/);
 assert.match(styles, /@media \(min-width: 960px\) and \(min-height: 501px\) and \(orientation: landscape\)[\s\S]*grid-template-areas:\s*"palette canvas heading"/);
+assert.match(styles, /@media \(min-width: 540px\) and \(max-height: 500px\) and \(orientation: landscape\)[\s\S]*grid-template-areas:\s*"palette canvas heading"/);
+assert.match(styles, /@media \(min-width: 540px\) and \(max-width: 639px\)[\s\S]*grid-template-columns:\s*58px minmax\(190px, 210px\) minmax\(0, 1fr\)/);
 assert.match(styles, /@media \(min-width: 700px\)[\s\S]*\.answer-row\s*\{ position:\s*static/);
 assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);

@@ -58,7 +58,7 @@ function classList(initial = []) {
 {
   const state = { word: { category: "테스트", word: "긴 제시어", answers: ["긴 제시어"], isCustomWord: false }, editDrawing: null, dirty: false, ctx: { globalCompositeOperation: "source-over" } };
   const appEl = { innerHTML: "" };
-  const colors = Array.from({ length: drawingColors.length }, () => ({}));
+  const colors = Array.from({ length: drawingColors.length }, () => ({ classList: classList(), setAttribute() {} }));
   const drawScreen = { classList: classList() };
   const customWordForm = { classList: classList(["hidden"]), onsubmit: null };
   const customWordButton = { onclick: null, attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
@@ -67,14 +67,14 @@ function classList(initial = []) {
   const customCategory = { value: "", focus() {} };
   const customWord = { value: "" };
   const customAnswers = { value: "" };
-  const eraser = {};
+  const eraser = { classList: classList(), attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
   const undo = {};
   const clearCanvas = {};
   const nextWord = {};
   const saveDrawing = {};
   const document = {
     querySelectorAll: selector => selector === ".color" ? colors : [],
-    querySelector: selector => selector === ".draw-screen" ? drawScreen : null
+    querySelector: selector => selector === ".draw-screen" ? drawScreen : selector === "#eraser" ? eraser : null
   };
   const names = ["state", "randomWord", "escapeHtml", "DRAWING_COLORS", "appEl", "setupCanvas", "document", "selectDrawingColor", "eraser", "undo", "clearCanvas", "nextWord", "customWordButton", "customWordForm", "customCategory", "customWord", "customAnswers", "answerHelpButton", "answerHelp", "saveDrawing", "undoCanvas", "openClearCanvasModal", "confirm", "isValidCategory", "textLength", "normalizeAnswer", "showToast", "saveDrawingDraft"];
   const values = [state, () => {}, value => String(value), drawingColors, appEl, () => {}, document, () => {}, eraser, undo, clearCanvas, nextWord, customWordButton, customWordForm, customCategory, customWord, customAnswers, answerHelpButton, answerHelp, saveDrawing, () => {}, () => {}, () => true, () => true, value => String(value).length, value => String(value), () => {}, () => {}];
@@ -86,7 +86,7 @@ function classList(initial = []) {
   }
   assert.match(appEl.innerHTML, /<canvas id="drawingCanvas" width="720" height="720"/);
   assert.equal((appEl.innerHTML.match(/data-color=/g) || []).length, drawingColors.length);
-  assert.match(appEl.innerHTML, /<div class="tools"><div class="colors"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="eraser"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
+  assert.match(appEl.innerHTML, /<div class="tools"><div class="drawing-palette"><div class="colors"[\s\S]*id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
   assert.ok(appEl.innerHTML.indexOf('class="card word-card"') < appEl.innerHTML.indexOf('class="custom-word-form hidden"'));
   assert.ok(appEl.innerHTML.indexOf('class="custom-word-form hidden"') < appEl.innerHTML.indexOf('id="drawingCanvas"'));
   assert.ok(appEl.innerHTML.indexOf('id="drawingCanvas"') < appEl.innerHTML.indexOf('id="saveDrawing"'));
@@ -96,6 +96,8 @@ function classList(initial = []) {
   assert.equal(typeof saveDrawing.onclick, "function");
   eraser.onclick();
   assert.equal(state.ctx.globalCompositeOperation, "destination-out");
+  assert.equal(eraser.classList.contains("active"), true);
+  assert.equal(eraser.attributes["aria-pressed"], "true");
   customWordButton.onclick();
   assert.equal(customWordForm.classList.contains("hidden"), false);
   assert.equal(drawScreen.classList.contains("custom-word-open"), true);
@@ -129,7 +131,7 @@ function classList(initial = []) {
 assert.doesNotMatch(styles, /100dvh\s*-\s*61px|100dvh\s*-\s*375px/);
 assert.match(styles, /\.app-shell\s*\{[^}]*max-width:\s*1180px/);
 assert.match(styles, /\.canvas-wrap\s*\{[^}]*max-width:\s*720px/);
-assert.match(styles, /@media \(min-width: 960px\) and \(min-height: 501px\) and \(orientation: landscape\)[\s\S]*grid-template-areas:\s*"canvas heading"/);
+assert.match(styles, /@media \(min-width: 960px\) and \(min-height: 501px\) and \(orientation: landscape\)[\s\S]*grid-template-areas:\s*"palette canvas heading"/);
 assert.match(styles, /@media \(min-width: 700px\)[\s\S]*\.answer-row\s*\{ position:\s*static/);
 assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);
@@ -139,7 +141,12 @@ assert.match(styles, /#drawingCanvas\s*\{[^}]*transform-origin:\s*0 0/);
 assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transition/);
 assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas\s*\{[^}]*touch-action:\s*none/);
 assert.match(fixture, /<header class="app-header">\s*<button class="home-button"[\s\S]*<button class="brand-button"[\s\S]*<div class="score-chip"/);
-assert.match(fixture, /<div class="tools"><div class="colors" data-colors><\/div><div class="tool-grid"><input id="brushSize"[\s\S]*id="eraser"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
+assert.match(fixture, /<div class="tools"><div class="drawing-palette"><div class="colors" data-colors><\/div><button id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
+assert.doesNotMatch(styles, /drawing-scroll-lock|body\.drawing-scroll-lock[\s\S]*position:\s*fixed/);
+assert.doesNotMatch(app.match(/function setupCanvas[\s\S]*?(?=function undoCanvas)/)?.[0] || "", /window\.scrollTo|lockDrawingScroll|unlockDrawingScroll/);
+assert.match(app, /visualViewport\?\.addEventListener\("resize", scheduleViewportRefresh\)/);
+assert.match(app, /visualViewport\?\.addEventListener\("scroll", scheduleViewportRefresh\)/);
+assert.match(app, /window\.addEventListener\("orientationchange", scheduleViewportRefresh\)/);
 assert.match(fixture, /<div class="card word-card"[\s\S]*<form class="custom-word-form hidden"[\s\S]*<canvas id="drawingCanvas" width="720" height="720"[\s\S]*<button id="saveDrawing"/);
 assert.match(fixture, /drawingColors = JSON\.parse\(params\.get\("colors"\)/);
 assert.match(fixture, /<div id="galleryContent"><div class="frame"[\s\S]*<div class="frame-nav"[\s\S]*<div class="frame-info"/);

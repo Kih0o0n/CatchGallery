@@ -34,7 +34,7 @@ function fakeCanvas(context = fakeContext()) {
     getBoundingClientRect() { this.rectReads++; return { left: 10, top: 20, width: 360, height: 360 }; },
     addEventListener(type, listener) { listeners.set(type, listener); },
     removeEventListener(type, listener) { if (listeners.get(type) === listener) listeners.delete(type); },
-    emit(type, values = {}) { listeners.get(type)?.({ pointerId: 7, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, pressure: 0.5, clientX: 10, clientY: 20, cancelable: true, preventDefault() { this.prevented = true; }, ...values }); },
+    emit(type, values = {}) { const event = { pointerId: 7, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, pressure: 0.5, clientX: 10, clientY: 20, cancelable: true, preventDefault() { this.prevented = true; }, ...values }; listeners.get(type)?.(event); return event; },
     setPointerCapture(id) { if (this.throwSetCapture) throw new Error("capture failed"); this.captures.add(id); },
     hasPointerCapture(id) { return this.captures.has(id); },
     releasePointerCapture(id) { if (this.throwReleaseCapture) throw new Error("release failed"); this.captures.delete(id); this.releaseCount = (this.releaseCount || 0) + 1; }
@@ -64,6 +64,8 @@ function historyHarness() {
 
 assert.doesNotMatch(source, /getImageData|putImageData|willReadFrequently/, "pixel snapshots and readback context options must be removed");
 assert.match(source, /const DRAWING_HISTORY_LIMIT = 15/);
+assert.doesNotMatch(source, /function lockDrawingScroll|function unlockDrawingScroll|drawing-scroll-lock/);
+assert.doesNotMatch(source.match(/function setupCanvas[\s\S]*?(?=function undoCanvas)/)?.[0] || "", /scrollTo\(/);
 
 {
   const { api } = historyHarness();
@@ -123,7 +125,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   canvas.throwSetCapture = throwSetCapture;
   canvas.throwReleaseCapture = throwReleaseCapture;
   const windowTarget = fakeEventTarget();
-  let drawingQueries = 0, brushQueries = 0, locks = 0, unlocks = 0, image;
+  let drawingQueries = 0, brushQueries = 0, image;
   const warnings = [];
   const state = { route: "draw", canvas: null, ctx: null, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyBaseHasContent: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, canvasInputCleanup: null, drawing: false, activePointerId: null, dirty: false, editImageRequestId: 0 };
   const documentEvents = fakeEventTarget();
@@ -135,11 +137,15 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   };
   class TestImage { constructor() { image = this; } set src(value) { this.value = value; } }
   const helperCode = actionNames.map(pick).join("\n");
-  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
-    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { locks++; }, () => { unlocks++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
+  let frameCallback = null;
+  windowTarget.visualViewport = fakeEventTarget();
+  windowTarget.requestAnimationFrame = callback => { frameCallback = callback; return 1; };
+  windowTarget.cancelAnimationFrame = () => { frameCallback = null; };
+  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
+    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
-  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, counts: () => ({ drawingQueries, brushQueries, locks, unlocks }) };
+  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries }) };
 }
 function assertPointerMetadataCleared(state) {
   assert.equal(state.activePointerId, null);
@@ -167,10 +173,13 @@ function assertPointerMetadataCleared(state) {
 
 {
   const h = setupHarness();
-  h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
-  h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
+  const touchStart = h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
+  const touchMove = h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
+  assert.equal(touchStart.prevented, true, "touch drawing blocks the browser gesture only on the canvas input");
+  assert.equal(touchMove.prevented, true);
   assert.equal(h.state.dirty, true);
-  h.canvas.emit("pointerdown", { pointerId: 61, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  const pinchStart = h.canvas.emit("pointerdown", { pointerId: 61, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  assert.equal(pinchStart.prevented, true, "pinch takeover blocks native zoom and scrolling");
   assert.equal(h.state.canvasGestureActive, true);
   assert.equal(h.state.history.length, 0, "the interrupted first-finger stroke is not committed");
   assert.equal(h.state.dirty, false, "gesture takeover restores dirty to its pre-stroke value");
@@ -191,6 +200,30 @@ function assertPointerMetadataCleared(state) {
   h.canvas.emit("pointerdown", { pointerId: 63, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
   h.canvas.emit("pointerup", { pointerId: 63, pointerType: "touch" });
   assert.equal(h.state.history.length, 1, "a fresh touch can draw after every gesture finger ends");
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 70, pointerType: "touch", clientX: 40, clientY: 50 });
+  assert.equal(h.canvas.rectReads, 1);
+  h.state.canvasZoomScale = 2;
+  h.state.canvasZoomX = -999;
+  h.state.canvasZoomY = 50;
+  h.canvas.getBoundingClientRect = function () { this.rectReads++; return { left: 20, top: 30, width: 300, height: 300 }; };
+  h.canvas.parentElement.clientWidth = 300;
+  h.canvas.parentElement.clientHeight = 300;
+  h.window.emit("resize");
+  h.window.emit("orientationchange");
+  h.window.visualViewport.emit("resize");
+  h.flushFrame();
+  assert.equal(h.canvas.rectReads, 2, "coalesced viewport changes refresh the active stroke bounds once");
+  assert.deepEqual(h.state.canvasRect, { left: 20, top: 30, width: 300, height: 300 });
+  assert.equal(h.state.canvasZoomScale, 2);
+  assert.equal(h.state.canvasZoomX, -300);
+  assert.equal(h.state.canvasZoomY, 0, "viewport changes re-clamp the current pan without changing zoom");
+  h.canvas.emit("pointermove", { pointerId: 70, pointerType: "touch", clientX: 170, clientY: 180 });
+  assert.deepEqual(h.state.activeStroke.points.at(-1), { x: 360, y: 360 }, "stroke coordinates use the refreshed canvas rect");
+  h.canvas.emit("pointerup", { pointerId: 70, pointerType: "touch", clientX: 170, clientY: 180 });
 }
 
 {
@@ -216,7 +249,6 @@ function assertPointerMetadataCleared(state) {
   assert.deepEqual(h.state.history[0].points, [{ x: 20, y: 20 }, { x: 40, y: 40 }, { x: 60, y: 60 }]);
   assert.equal(h.state.dirty, true); assert.equal(h.state.drawing, false); assert.equal(h.state.activePointerId, null); assert.equal(h.state.activeStroke, null); assert.equal(h.state.canvasRect, null);
   assertPointerMetadataCleared(h.state);
-  assert.equal(h.counts().unlocks, 1, "lost capture after pointerup cannot finish twice");
 }
 
 {
@@ -259,7 +291,6 @@ function assertPointerMetadataCleared(state) {
   h.canvas.emit("pointerdown"); h.canvas.emit("pointermove", { clientX: 20, clientY: 30 }); h.canvas.emit("pointercancel"); h.canvas.emit("lostpointercapture");
   assert.equal(h.state.history.length, 1);
   assert.equal(h.state.history[0].compositeOperation, "destination-out");
-  assert.equal(h.counts().unlocks, 1);
   assertPointerMetadataCleared(h.state);
 }
 
@@ -398,7 +429,6 @@ function assertPointerMetadataCleared(state) {
   assert.equal(h.state.history.length, 1);
   assert.equal(h.context.calls.filter(call => call[0] === "drawImage").length, replayDraws, "lost capture cannot flush a second time");
   assert.equal(h.state.historyRedrawPending, false);
-  assert.equal(h.counts().unlocks, 1);
 }
 
 {
@@ -469,7 +499,6 @@ function assertPointerMetadataCleared(state) {
   assert.equal(h.state.activeStroke, null);
   assert.equal(h.state.canvasRect, null);
   assert.equal(h.state.drawing, false);
-  assert.equal(h.counts().unlocks, 1);
   assert.equal(h.warnings.length, 1);
   h.canvas.emit("pointerdown", { pointerId: 2, pointerType: "touch" });
   assert.equal(h.state.activePointerId, 2, "capture failure cannot block the next finger input");
@@ -499,7 +528,6 @@ for (const endTarget of ["canvas", "window"]) {
   h.window.emit("pointerup", { pointerId: 5 });
   h.window.emit("pointercancel", { pointerId: 5 });
   assert.equal(h.state.history.length, 1);
-  assert.equal(h.counts().unlocks, 1);
   assert.equal(h.state.activePointerId, null);
 }
 
@@ -621,7 +649,6 @@ for (const pointerType of ["mouse", "pen"]) {
   h.window.emit("pointerup", { pointerId: 40 });
   assert.equal(h.state.history.length, 1);
   assert.equal(h.state.activePointerId, null);
-  assert.equal(h.counts().unlocks, 1);
   assertPointerMetadataCleared(h.state);
 }
 

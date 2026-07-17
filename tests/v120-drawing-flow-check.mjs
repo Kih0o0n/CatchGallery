@@ -26,7 +26,7 @@ function drawingHelpers(state, overrides = {}) {
     randomWord: overrides.randomWord || (() => { state.word = { word: "새 제시어" }; }),
     renderDraw: overrides.renderDraw || (() => {}),
     route: overrides.route || (() => {}),
-    document: overrides.document || { querySelectorAll: () => [] },
+    document: overrides.document || { querySelectorAll: () => [], querySelector: () => null },
     releaseCanvasHistory: overrides.releaseCanvasHistory || (() => {
       state.history = [];
       state.historyBaseCanvas = null;
@@ -101,13 +101,18 @@ function classList(initial = []) {
 
 {
   const state = { ctx: { globalCompositeOperation: "destination-out", strokeStyle: "old" } };
-  const first = { dataset: { color: "#3e3a48" }, classList: classList(["selected"]) };
-  const next = { dataset: { color: "#83d3f2" }, classList: classList() };
-  drawingHelpers(state).selectDrawingColor(next, [first, next]);
+  const first = { dataset: { color: "#3e3a48" }, classList: classList(["selected"]), attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
+  const next = { dataset: { color: "#83d3f2" }, classList: classList(), attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } };
+  const eraser = { classList: classList(["active"]), attributes: { "aria-pressed": "true" }, setAttribute(name, value) { this.attributes[name] = value; } };
+  drawingHelpers(state, { document: { querySelectorAll: () => [first, next], querySelector: selector => selector === "#eraser" ? eraser : null } }).selectDrawingColor(next, [first, next]);
   assert.equal(first.classList.contains("selected"), false);
   assert.equal(next.classList.contains("selected"), true);
   assert.equal(state.ctx.globalCompositeOperation, "source-over");
   assert.equal(state.ctx.strokeStyle, "#83d3f2");
+  assert.equal(eraser.classList.contains("active"), false);
+  assert.equal(eraser.attributes["aria-pressed"], "false");
+  assert.equal(first.attributes["aria-pressed"], "false");
+  assert.equal(next.attributes["aria-pressed"], "true");
 }
 
 function saveHarness({ edit = null, fail = false, deferred = false } = {}) {

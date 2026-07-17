@@ -1207,9 +1207,57 @@ function setCanvasTouchDocumentLock(locked) {
   document.documentElement?.classList.toggle(CANVAS_TOUCH_LOCK_CLASS, !!locked);
   document.body?.classList.toggle(CANVAS_TOUCH_LOCK_CLASS, !!locked);
 }
+function cancelCanvasTouchFallbackCleanup() {
+  if (!state.canvasTouchCleanupTimer) return;
+  window.clearTimeout(state.canvasTouchCleanupTimer);
+  state.canvasTouchCleanupTimer = null;
+}
+function lockCanvasTouchSession() {
+  if (state.canvasTouchLock) return false;
+  cancelCanvasTouchFallbackCleanup();
+  const body = document.body;
+  const scrollX = Number.isFinite(Number(window.scrollX)) ? Number(window.scrollX) : 0;
+  const scrollY = Number.isFinite(Number(window.scrollY)) ? Number(window.scrollY) : 0;
+  const lock = {
+    scrollX, scrollY,
+    bodyStyle: {
+      position: body.style.position, top: body.style.top, left: body.style.left,
+      right: body.style.right, width: body.style.width
+    }
+  };
+  state.canvasTouchLock = lock;
+  setCanvasTouchDocumentLock(true);
+  body.style.position = "fixed";
+  body.style.top = `${-scrollY}px`;
+  body.style.left = scrollX ? `${-scrollX}px` : "0px";
+  body.style.right = "0px";
+  body.style.width = "100%";
+  return true;
+}
 function clearCanvasTouchSession() {
+  cancelCanvasTouchFallbackCleanup();
   state.canvasTouchIdentifiers?.clear();
+  const lock = state.canvasTouchLock;
+  state.canvasTouchLock = null;
   setCanvasTouchDocumentLock(false);
+  if (!lock) return false;
+  const body = document.body;
+  Object.assign(body.style, lock.bodyStyle);
+  if (Number.isFinite(lock.scrollX) && Number.isFinite(lock.scrollY) && (window.scrollX !== lock.scrollX || window.scrollY !== lock.scrollY)) window.scrollTo(lock.scrollX, lock.scrollY);
+  return true;
+}
+function canvasTouchPointersIdle() {
+  return state.activePointerId === null && !state.canvasGestureActive && !state.canvasGesturePointers?.size && !state.canvasGestureSuppressedPointers?.size;
+}
+function scheduleCanvasTouchFallbackCleanup() {
+  if (!state.canvasTouchIdentifiers?.size || !state.canvasTouchLock || !canvasTouchPointersIdle()) return false;
+  cancelCanvasTouchFallbackCleanup();
+  const lock = state.canvasTouchLock;
+  state.canvasTouchCleanupTimer = window.setTimeout(() => {
+    state.canvasTouchCleanupTimer = null;
+    if (state.canvasTouchLock === lock && state.canvasTouchIdentifiers?.size && canvasTouchPointersIdle()) clearCanvasTouchSession();
+  }, 120);
+  return true;
 }
 function eventTargetsCanvas(event, canvas = state.canvas) {
   if (!canvas || !event) return false;
@@ -1229,8 +1277,9 @@ function bindDocumentDrawingScrollBlocker() {
     const active = identifiers();
     if (state.route !== "draw" || (!active.size && !eventTargetsCanvas(event))) return;
     preventIfCancelable(event);
+    const wasEmpty = active.size === 0;
     changedTouchIdentifiers(event).forEach(identifier => active.add(identifier));
-    if (active.size) setCanvasTouchDocumentLock(true);
+    if (wasEmpty && active.size) lockCanvasTouchSession();
   };
   const move = event => {
     if (state.route === "draw" && identifiers().size) preventIfCancelable(event);
@@ -1491,9 +1540,6 @@ function setupCanvas(imageData) {
     return { x: event.clientX - rect.left - Number(viewport.clientLeft || 0), y: event.clientY - rect.top - Number(viewport.clientTop || 0) };
   };
   const gesturePoints = () => gesturePointerIds.map(id => state.canvasGesturePointers.get(id)).filter(Boolean);
-  const clearTouchSessionIfPointerIdle = () => {
-    if (state.activePointerId === null && !state.canvasGestureActive && !state.canvasGesturePointers.size && !state.canvasGestureSuppressedPointers.size && typeof clearCanvasTouchSession === "function") clearCanvasTouchSession();
-  };
   const clearActivePointer = () => {
     state.drawing = false;
     state.activePointerId = null;
@@ -1651,17 +1697,17 @@ function setupCanvas(imageData) {
   const end = event => {
     if (!finishGesturePointer(event)) finish(event, { releaseCapture: true, commit: true, commitDot: true });
     if (event.pointerType === "touch") state.canvasGesturePointers.delete(event.pointerId);
-    clearTouchSessionIfPointerIdle();
+    if (event.pointerType === "touch" && typeof scheduleCanvasTouchFallbackCleanup === "function") scheduleCanvasTouchFallbackCleanup();
   };
   const cancel = event => {
     if (!finishGesturePointer(event)) finish(event, { releaseCapture: true, commit: true });
     if (event.pointerType === "touch") state.canvasGesturePointers.delete(event.pointerId);
-    clearTouchSessionIfPointerIdle();
+    if (event.pointerType === "touch" && typeof scheduleCanvasTouchFallbackCleanup === "function") scheduleCanvasTouchFallbackCleanup();
   };
   const lost = event => {
     if (!finishGesturePointer(event)) finish(event, { releaseCapture: false, commit: true, commitDot: true });
     if (event.pointerType === "touch") state.canvasGesturePointers.delete(event.pointerId);
-    clearTouchSessionIfPointerIdle();
+    if (event.pointerType === "touch" && typeof scheduleCanvasTouchFallbackCleanup === "function") scheduleCanvasTouchFallbackCleanup();
   };
   const interrupt = () => {
     const hadGesture = state.canvasGestureSuppressedPointers.size > 0;

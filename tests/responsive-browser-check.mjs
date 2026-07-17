@@ -8,6 +8,8 @@ import { createServer } from "node:net";
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const fixture = new URL("./responsive-fixture.html", import.meta.url).href;
 const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const touchLockSource = app.match(/function preventIfCancelable[\s\S]*?(?=function releaseCanvasHistory)/)?.[0];
+assert.ok(touchLockSource, "canvas touch lock source must be readable");
 
 function readArrayConstant(name) {
   const marker = `const ${name} =`;
@@ -217,6 +219,45 @@ try {
   assert.equal(customWord.documentScroll, true, "custom word form must enable document scrolling");
   const modal = (await render(568, 320, "view=draw&modal=1")).modal;
   assert.ok(modal.clientHeight < modal.scrollHeight, "short-screen modal must scroll internally");
+
+  await render(360, 640, "view=draw");
+  await command("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+  const touchSetup = await command("Runtime.evaluate", {
+    expression: `(() => {
+      window.scrollTo(0, 100);
+      const canvas = document.querySelector("#drawingCanvas");
+      const state = { route: "draw", canvas, canvasTouchIdentifiers: new Set(), activePointerId: null, canvasGestureActive: false, canvasGesturePointers: new Map(), canvasGestureSuppressedPointers: new Set() };
+      ${touchLockSource}
+      bindDocumentDrawingScrollBlocker();
+      window.__canvasTouchTest = { state, clearCanvasTouchSession };
+      const rect = canvas.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, canvasTop: rect.top, scrollY };
+    })()`, returnByValue: true
+  });
+  const touch = touchSetup.result.value;
+  await command("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touch.x, y: touch.y, id: 1, radiusX: 2, radiusY: 2, force: 1 }] });
+  const lockedState = await command("Runtime.evaluate", { expression: `({ scrollY, savedScrollY: window.__canvasTouchTest.state.canvasTouchLock?.scrollY, canvasTop: document.querySelector("#drawingCanvas").getBoundingClientRect().top, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
+  assert.equal(lockedState.result.value.locked, true, "mobile touchstart must apply the strong canvas lock");
+  assert.equal(lockedState.result.value.savedScrollY, touch.scrollY, "locking must retain the original scroll position for restoration");
+  assert.ok(Math.abs(lockedState.result.value.canvasTop - touch.canvasTop) <= 1, "locking must preserve the visible canvas position");
+  await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: touch.x, y: touch.y - 120, id: 1, radiusX: 2, radiusY: 2, force: 1 }] });
+  await delay(50);
+  const duringDrag = await command("Runtime.evaluate", { expression: "scrollY", returnByValue: true });
+  assert.equal(duringDrag.result.value, lockedState.result.value.scrollY, "vertical canvas drag must not move the locked document");
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await delay(50);
+  const afterCanvasDrag = await command("Runtime.evaluate", { expression: `({ scrollY, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
+  assert.equal(afterCanvasDrag.result.value.locked, false, "final touchend must remove the strong lock");
+  assert.equal(afterCanvasDrag.result.value.scrollY, touch.scrollY, "final touchend must restore the original scroll position");
+
+  await command("Runtime.evaluate", { expression: "scrollTo(0, 0)", returnByValue: true });
+  await command("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 350, y: 600, id: 2, radiusX: 2, radiusY: 2, force: 1 }] });
+  await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 350, y: 180, id: 2, radiusX: 2, radiusY: 2, force: 1 }] });
+  await delay(100);
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  const outsideScroll = await command("Runtime.evaluate", { expression: `({ scrollY, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
+  assert.ok(outsideScroll.result.value.scrollY > 0, "touches starting outside the canvas must retain normal page scrolling");
+  assert.equal(outsideScroll.result.value.locked, false);
 } finally {
   shuttingDown = true;
   if (socket && socket.readyState < WebSocket.CLOSING) socket.close();

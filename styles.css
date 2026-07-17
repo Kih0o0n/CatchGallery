@@ -220,6 +220,13 @@ html.canvas-touch-session-lock,
 body.canvas-touch-session-lock {
   overflow: hidden !important;
   overscroll-behavior: none !important;
+  touch-action: none !important;
+}
+body.canvas-touch-session-lock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  width: 100%;
 }
 .canvas-wrap,
 #drawingCanvas {

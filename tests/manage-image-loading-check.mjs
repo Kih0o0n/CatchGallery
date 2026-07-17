@@ -264,18 +264,18 @@ function manageLoaderHarness({ images = [], max = 2, load } = {}) {
 
 // Route cleanup discards metadata and repeatedly cancels observer/loader/waiters.
 {
-  let solveCancels = 0, manageCancels = 0, unlocks = 0;
+  let solveCancels = 0, manageCancels = 0;
   const cleanupState = {
     manageDrawings: [{ id: "a" }], galleryObserver: null, galleryLoader: null,
     editImageRequestId: 0, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 1, dirty: true, activeSaveOperationId: 1, publishing: true
   };
-  const cleanup = Function("state", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", "unlockDrawingScroll", `${pick("cleanupScreenResources")}; return cleanupScreenResources;`)(cleanupState, () => solveCancels++, () => manageCancels++, () => {}, () => { cleanupState.historyRedrawPending = false; }, () => unlocks++);
+  const cleanup = Function("state", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", `${pick("cleanupScreenResources")}; return cleanupScreenResources;`)(cleanupState, () => solveCancels++, () => manageCancels++, () => {}, () => { cleanupState.historyRedrawPending = false; });
   cleanup(); cleanup();
   assert.equal(cleanupState.manageDrawings, null);
   assert.equal(manageCancels, 2);
   assert.equal(solveCancels, 2);
-  assert.equal(unlocks, 2);
+  assert.equal(cleanupState.publishing, false);
 }
 
 function editHarness() {

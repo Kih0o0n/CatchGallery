@@ -36,14 +36,13 @@ function deferred() {
 
 {
   let disconnected = 0;
-  let unlocked = 0;
   const loader = { cancelled: false, queue: [1, 2] };
   const state = {
     galleryObserver: { disconnect: () => disconnected++ }, galleryLoader: loader,
     editImageRequestId: 4, canvas: {}, ctx: {}, history: [1], drawing: true,
     activePointerId: 7, dirty: true, activeSaveOperationId: 9, publishing: true
   };
-  const cleanup = Function("state", "unlockDrawingScroll", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", `${cleanupSource}; return cleanupScreenResources;`)(state, () => unlocked++, () => {}, () => {}, () => {}, () => { state.history = []; state.drawing = false; state.activePointerId = null; });
+  const cleanup = Function("state", "cancelSolveImageLoading", "cancelManageImageLoading", "cancelFeedbackLoading", "releaseCanvasHistory", `${cleanupSource}; return cleanupScreenResources;`)(state, () => {}, () => {}, () => {}, () => { state.history = []; state.drawing = false; state.activePointerId = null; });
   cleanup();
   cleanup();
   assert.equal(disconnected, 1, "IntersectionObserver must be disconnected once and cleared");
@@ -54,7 +53,7 @@ function deferred() {
   assert.deepEqual(state.history, []);
   assert.equal(state.drawing, false);
   assert.equal(state.activePointerId, null);
-  assert.equal(unlocked, 2, "cleanup must be safely repeatable");
+  assert.equal(state.publishing, false, "cleanup must be safely repeatable without a global scroll lock");
 }
 
 {

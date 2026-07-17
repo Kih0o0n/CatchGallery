@@ -501,8 +501,12 @@ function startNewDrawing({ preserveSeenWords = false } = {}) {
   else route("draw");
 }
 function selectDrawingColor(button, buttons = document.querySelectorAll(".color")) {
-  buttons.forEach(item => item.classList.remove("selected"));
+  buttons.forEach(item => { item.classList.remove("selected"); item.setAttribute("aria-pressed", "false"); });
   button.classList.add("selected");
+  button.setAttribute("aria-pressed", "true");
+  const eraserButton = document.querySelector("#eraser");
+  eraserButton?.classList.remove("active");
+  eraserButton?.setAttribute("aria-pressed", "false");
   state.ctx.globalCompositeOperation = "source-over";
   state.ctx.strokeStyle = button.dataset.color;
 }
@@ -604,7 +608,6 @@ function cleanupScreenResources() {
   state.dirty = false;
   state.activeSaveOperationId = null;
   state.publishing = false;
-  unlockDrawingScroll();
 }
 function transitionRoute(name, { historyMode = "push", historyState = null, renderOptions = {} } = {}) {
   const previousRoute = state.route;
@@ -1067,10 +1070,15 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필"></button>`).join("")}</div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="eraser" class="button ghost">지우개</button><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필" aria-pressed="${i === 0 ? "true" : "false"}"></button>`).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
-  eraser.onclick = () => { state.ctx.globalCompositeOperation = "destination-out"; };
+  eraser.onclick = () => {
+    state.ctx.globalCompositeOperation = "destination-out";
+    document.querySelectorAll(".color").forEach(button => { button.classList.remove("selected"); button.setAttribute("aria-pressed", "false"); });
+    eraser.classList.add("active");
+    eraser.setAttribute("aria-pressed", "true");
+  };
   undo.onclick = undoCanvas;
   clearCanvas.onclick = openClearCanvasModal;
   if (!edit) nextWord.onclick = () => {
@@ -1194,27 +1202,11 @@ function showDrawingPublishedModal() {
 }
 
 function preventIfCancelable(event) { if (event && event.cancelable) event.preventDefault(); }
-function lockDrawingScroll() {
-  if (document.body.classList.contains("drawing-scroll-lock")) return;
-  const y = window.scrollY || document.documentElement.scrollTop || 0;
-  document.body.dataset.scrollY = String(y);
-  document.body.style.top = `-${y}px`;
-  document.documentElement.classList.add("drawing-scroll-lock");
-  document.body.classList.add("drawing-scroll-lock");
-}
-function unlockDrawingScroll() {
-  if (!document.body.classList.contains("drawing-scroll-lock")) return;
-  const y = Number(document.body.dataset.scrollY || 0);
-  document.documentElement.classList.remove("drawing-scroll-lock");
-  document.body.classList.remove("drawing-scroll-lock");
-  document.body.style.top = "";
-  delete document.body.dataset.scrollY;
-  window.scrollTo(0, y);
-}
 function bindDocumentDrawingScrollBlocker() {
   if (window.__catchGalleryDrawingScrollBlockerBound) return;
   const block = event => {
-    if (state.route === "draw" && (state.drawing || state.canvasGestureActive || state.canvasGestureSuppressedPointers.size)) preventIfCancelable(event);
+    const targetsCanvas = !!state.canvas && (event.target === state.canvas || state.canvas.contains?.(event.target));
+    if (state.route === "draw" && targetsCanvas) preventIfCancelable(event);
   };
   document.addEventListener("touchmove", block, { passive: false, capture: true });
   document.addEventListener("touchcancel", block, { passive: false, capture: true });
@@ -1438,6 +1430,7 @@ function setupCanvas(imageData) {
   let gestureStart = null;
   let gesturePointerIds = [];
   let resizeObserver = null;
+  let viewportFrame = 0;
   const eventTime = event => Number.isFinite(event?.timeStamp) ? event.timeStamp : null;
   const viewportSize = () => ({ width: Number(viewport?.clientWidth || canvas.clientWidth || 0), height: Number(viewport?.clientHeight || canvas.clientHeight || 0) });
   const applyCanvasTransform = transform => {
@@ -1465,7 +1458,7 @@ function setupCanvas(imageData) {
     state.activeStroke = null;
     state.canvasRect = null;
   };
-  const finish = (event, { releaseCapture = false, commit = true, commitDot = false, keepScrollLocked = false } = {}) => {
+  const finish = (event, { releaseCapture = false, commit = true, commitDot = false } = {}) => {
     if (inputDisposed || !ownsCanvas()) return false;
     const pointerId = event?.pointerId ?? state.activePointerId;
     if (pointerId !== state.activePointerId || !state.activeStroke) return false;
@@ -1478,14 +1471,13 @@ function setupCanvas(imageData) {
       if (commitCanvasAction(stroke)) state.dirty = true;
     }
     flushPendingCanvasRedraw();
-    if (!keepScrollLocked) unlockDrawingScroll();
     if (releaseCapture) safeReleasePointerCapture(canvas, pointerId);
     return true;
   };
   const cancelStrokeForGesture = () => {
     if (state.activePointerType !== "touch" || !state.activeStroke) return false;
     const dirty = activeStrokeInitialDirty;
-    finish(null, { releaseCapture: false, commit: false, keepScrollLocked: true });
+    finish(null, { releaseCapture: false, commit: false });
     state.dirty = dirty;
     redrawCanvasFromHistory();
     return true;
@@ -1506,7 +1498,6 @@ function setupCanvas(imageData) {
     const size = viewportSize();
     gestureStart = { points, scale: state.canvasZoomScale, x: state.canvasZoomX, y: state.canvasZoomY, ...size };
     safeSetPointerCapture(canvas, event.pointerId);
-    lockDrawingScroll();
     return true;
   };
   const finishGesturePointer = event => {
@@ -1521,10 +1512,7 @@ function setupCanvas(imageData) {
       gestureStart = null;
       gesturePointerIds = [];
     }
-    if (state.canvasGestureSuppressedPointers.size === 0) {
-      state.canvasGesturePointers.clear();
-      unlockDrawingScroll();
-    }
+    if (state.canvasGestureSuppressedPointers.size === 0) state.canvasGesturePointers.clear();
     return true;
   };
   const start = event => {
@@ -1561,7 +1549,6 @@ function setupCanvas(imageData) {
     if (!ownsCanvas() || state.activePointerId !== null) return;
     if (event.pointerType === "touch" && !state.canvasGesturePointers.has(event.pointerId)) state.canvasGesturePointers.set(event.pointerId, viewportPoint(event));
     preventIfCancelable(event);
-    if (event.pointerType !== "mouse") lockDrawingScroll();
     const rect = canvas.getBoundingClientRect();
     const point = canvasPoint(event, rect, canvas);
     state.activePointerId = event.pointerId;
@@ -1641,7 +1628,7 @@ function setupCanvas(imageData) {
       gesturePointerIds = [];
     }
     const finishedStroke = finish(null, { releaseCapture: true, commit: true });
-    if (hadGesture || !finishedStroke) unlockDrawingScroll();
+    return hadGesture || finishedStroke;
   };
   const visibility = () => { if (document.visibilityState === "hidden") interrupt(); };
   canvas.addEventListener("pointerdown", start, { passive: false });
@@ -1655,10 +1642,29 @@ function setupCanvas(imageData) {
   window.addEventListener("pagehide", interrupt);
   document.addEventListener("visibilitychange", visibility);
   applyCanvasTransform({ scale: 1, x: 0, y: 0 });
+  const refreshViewport = () => {
+    viewportFrame = 0;
+    if (!ownsCanvas()) return;
+    applyCanvasTransform({ scale: state.canvasZoomScale, x: state.canvasZoomX, y: state.canvasZoomY });
+    if (state.activeStroke) state.canvasRect = canvas.getBoundingClientRect();
+    if (state.canvasGestureActive && gesturePointerIds.length === 2) {
+      const points = gesturePoints();
+      const size = viewportSize();
+      if (points.length === 2 && canvasTouchDistance(points) > 0) gestureStart = { points, scale: state.canvasZoomScale, x: state.canvasZoomX, y: state.canvasZoomY, ...size };
+    }
+  };
+  const scheduleViewportRefresh = () => {
+    if (viewportFrame || inputDisposed) return;
+    viewportFrame = window.requestAnimationFrame(refreshViewport);
+  };
   if (typeof ResizeObserver === "function" && viewport) {
-    resizeObserver = new ResizeObserver(() => applyCanvasTransform({ scale: state.canvasZoomScale, x: state.canvasZoomX, y: state.canvasZoomY }));
+    resizeObserver = new ResizeObserver(scheduleViewportRefresh);
     resizeObserver.observe(viewport);
   }
+  window.addEventListener("resize", scheduleViewportRefresh);
+  window.addEventListener("orientationchange", scheduleViewportRefresh);
+  window.visualViewport?.addEventListener("resize", scheduleViewportRefresh);
+  window.visualViewport?.addEventListener("scroll", scheduleViewportRefresh);
   state.canvasInputCleanup = () => {
     if (inputDisposed) return;
     inputDisposed = true;
@@ -1672,6 +1678,12 @@ function setupCanvas(imageData) {
     window.removeEventListener("blur", interrupt);
     window.removeEventListener("pagehide", interrupt);
     document.removeEventListener("visibilitychange", visibility);
+    window.removeEventListener("resize", scheduleViewportRefresh);
+    window.removeEventListener("orientationchange", scheduleViewportRefresh);
+    window.visualViewport?.removeEventListener("resize", scheduleViewportRefresh);
+    window.visualViewport?.removeEventListener("scroll", scheduleViewportRefresh);
+    if (viewportFrame) window.cancelAnimationFrame(viewportFrame);
+    viewportFrame = 0;
     resizeObserver?.disconnect();
     resizeObserver = null;
     safeReleasePointerCapture(canvas, state.activePointerId);
@@ -1683,7 +1695,6 @@ function setupCanvas(imageData) {
     gesturePointerIds = [];
     clearActivePointer();
     applyCanvasTransform({ scale: 1, x: 0, y: 0 });
-    unlockDrawingScroll();
   };
 
   if (imageData) {

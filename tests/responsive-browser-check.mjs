@@ -131,10 +131,11 @@ async function render(width, height, query) {
   throw new Error(`fixture did not render for ${width}x${height} ${query}`);
 }
 
-const viewports = [[320,568],[360,640],[360,800],[375,667],[390,844],[412,915],[568,320],[667,375],[844,390],[768,1024],[820,1180],[1024,1366],[1024,768],[1024,600],[1280,720],[1366,768],[1920,1080]];
+const viewports = [[320,568],[360,560],[360,640],[360,800],[375,667],[390,844],[412,915],[568,320],[667,375],[844,390],[768,1024],[820,1180],[1024,1366],[1024,768],[1024,600],[1280,720],[1366,768],[1920,1080]];
 const boundaryHeights = [619,620,621,622,699,700,701,702];
 const results = [];
 const boundaryResults = [];
+const portraitObservations = [];
 
 try {
   const port = await reservePort();
@@ -169,6 +170,7 @@ try {
     assert.equal(metrics.horizontalOverflow, false, `${width}x${height} must not overflow horizontally`);
     assert.ok(Math.abs(metrics.canvas[0] - metrics.canvas[1]) <= 1, `${width}x${height} canvas must remain square`);
     assert.ok(metrics.canvas[0] <= 720, `${width}x${height} canvas must not exceed 720 CSS px`);
+    assert.deepEqual(metrics.canvasResolution, [720, 720], `${width}x${height} keeps the internal canvas resolution`);
     if (width > height && width >= 540) {
       assert.ok(metrics.paletteRect.right <= metrics.canvasRect.left, `${width}x${height} palette must be left of the canvas`);
       assert.ok(metrics.controlsRect.left >= metrics.canvasRect.right, `${width}x${height} brush, undo, and clear controls must be right of the canvas`);
@@ -204,11 +206,21 @@ try {
   for (const [width, expected] of [[320, 3], [390, 3], [768, 4], [1024, 4], [1920, 5]]) {
     assert.equal((await render(width, 900, "view=gallery")).columns, expected, `${width}px gallery columns`);
   }
-  for (const [width, height] of [[360,800],[390,844],[412,915],[768,1024],[820,1180],[1024,1366]]) {
+  for (const [width, height] of [[360,560],[360,640],[390,844],[412,915]]) {
+    const portrait = await render(width, height, "view=draw");
+    const heightLimit = Math.max(180, Math.min(height - 447, height * .54));
+    const expectedWidth = Math.min(portrait.drawContentWidth, heightLimit, 720);
+    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} portrait canvas follows the viewport-height limit`);
+    assert.ok(portrait.canvas[0] <= portrait.drawContentWidth + 1, `${width}x${height} uses the smaller width/height constraint`);
+    assert.deepEqual(portrait.canvasResolution, [720, 720]);
+    portraitObservations.push({ viewport: `${width}x${height}`, canvas: portrait.canvas[0], scrollHeight: portrait.documentHeight, clientHeight: portrait.documentClientHeight });
+    if (!portrait.saveVisible) assert.equal(portrait.documentScroll, true, `${width}x${height} portrait controls must remain reachable by document scroll`);
+  }
+  assert.ok(portraitObservations[0].canvas < portraitObservations[1].canvas, `shorter portrait viewport must reduce the canvas: ${JSON.stringify(portraitObservations)}`);
+  for (const [width, height] of [[768,1024],[820,1180],[1024,1366]]) {
     const portrait = await render(width, height, "view=draw");
     const expectedWidth = Math.min(portrait.drawContentWidth, 720);
-    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} portrait canvas must fill its drawing column`);
-    if (!portrait.saveVisible) assert.equal(portrait.documentScroll, true, `${width}x${height} portrait controls must remain reachable by document scroll`);
+    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} tablet portrait keeps the existing drawing-column size`);
   }
   const longWord = await render(360, 640, "view=draw&long=1");
   assert.equal(longWord.horizontalOverflow, false, "long word must not overflow horizontally");
@@ -288,4 +300,5 @@ try {
 console.log(`Responsive browser: ${chrome}`);
 console.log(JSON.stringify(results));
 console.log(`Boundary tolerance: nondecreasing; 1px-adjacent heights may grow by at most 2 CSS px including rounding. ${JSON.stringify(boundaryResults)}`);
+console.log(`Portrait canvas observations: ${JSON.stringify(portraitObservations)}`);
 console.log("Responsive browser checks passed.");

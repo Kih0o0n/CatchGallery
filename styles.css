@@ -300,6 +300,12 @@ body.canvas-touch-session-lock {
   .draw-screen .notice { font-size: 11px; padding-block: 5px; }
 }
 
+@media (max-width: 699px) and (orientation: portrait) {
+  .draw-screen .canvas-wrap {
+    width: min(100%, clamp(180px, calc(100dvh - 447px), 54dvh), 720px);
+  }
+}
+
 @media (min-width: 540px) and (max-height: 500px) and (orientation: landscape) {
   .draw-screen {
     max-width: 1140px;

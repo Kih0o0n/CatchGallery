@@ -46,7 +46,8 @@
     }
     if (params.get("modal") === "1") document.querySelector("[data-fixture-modal]").classList.remove("hidden");
     const visibleFixture = document.querySelector(`[data-fixture="${view}"]`);
-    const canvas = document.querySelector(".draw-screen:not(.hidden) .canvas-wrap")?.getBoundingClientRect();
+    const canvasElement = document.querySelector(".draw-screen:not(.hidden) #drawingCanvas");
+    const canvas = canvasElement?.closest(".canvas-wrap")?.getBoundingClientRect();
     const drawScreen = document.querySelector(".draw-screen:not(.hidden)");
     const drawStyle = drawScreen ? getComputedStyle(drawScreen) : null;
     const save = document.querySelector(".draw-screen:not(.hidden) #saveDrawing")?.getBoundingClientRect();
@@ -61,7 +62,9 @@
       horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
       documentScroll: document.documentElement.scrollHeight > innerHeight,
       documentHeight: document.documentElement.scrollHeight,
+      documentClientHeight: document.documentElement.clientHeight,
       canvas: canvas ? [Math.round(canvas.width), Math.round(canvas.height)] : null,
+      canvasResolution: canvasElement ? [canvasElement.width, canvasElement.height] : null,
       canvasRect: canvas ? { left: canvas.left, right: canvas.right, top: canvas.top, bottom: canvas.bottom } : null,
       paletteRect: palette ? { left: palette.left, right: palette.right, top: palette.top, bottom: palette.bottom } : null,
       colorsRect: colors ? { left: colors.left, right: colors.right, top: colors.top, bottom: colors.bottom } : null,

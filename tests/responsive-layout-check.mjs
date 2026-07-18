@@ -137,8 +137,8 @@ assert.match(styles, /@media \(min-width: 540px\) and \(max-width: 639px\)[\s\S]
 assert.match(styles, /@media \(min-width: 700px\)[\s\S]*\.answer-row\s*\{ position:\s*static/);
 assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);
-assert.doesNotMatch(styles, /\.draw-screen \.canvas-wrap[^}]*dvh/);
 assert.match(styles, /\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*100%[^}]*max-width:\s*720px/);
+assert.match(styles, /@media \(max-width:\s*699px\) and \(orientation:\s*portrait\)[\s\S]*?\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*min\(100%,\s*clamp\(180px,\s*calc\(100dvh - 447px\),\s*54dvh\),\s*720px\)/);
 assert.match(styles, /#drawingCanvas\s*\{[^}]*transform-origin:\s*0 0/);
 assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transition/);
 assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas\s*\{[^}]*touch-action:\s*none/);

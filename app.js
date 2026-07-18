@@ -1533,7 +1533,9 @@ function setupCanvas(imageData) {
     state.canvasZoomX = safe.x;
     state.canvasZoomY = safe.y;
     canvas.style.transformOrigin = "0 0";
-    canvas.style.transform = `translate(${safe.x}px, ${safe.y}px) scale(${safe.scale})`;
+    canvas.style.transform = safe.scale === 1 && safe.x === 0 && safe.y === 0
+      ? ""
+      : `translate(${safe.x}px, ${safe.y}px) scale(${safe.scale})`;
     return safe;
   };
   const viewportPoint = event => {

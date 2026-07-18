@@ -174,6 +174,13 @@ function assertPointerMetadataCleared(state) {
 {
   const h = setupHarness();
   const clearsAtStart = h.counts().touchSessionClears;
+  assert.deepEqual([h.state.canvasZoomScale, h.state.canvasZoomX, h.state.canvasZoomY], [1, 0, 0]);
+  assert.equal(h.canvas.style.transform, "", "initial default zoom must not leave a neutral inline transform");
+  h.window.emit("resize");
+  h.window.emit("orientationchange");
+  h.window.visualViewport.emit("resize");
+  h.flushFrame();
+  assert.equal(h.canvas.style.transform, "", "repeated default viewport refreshes must keep the inline transform clear");
   const touchStart = h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
   assert.equal(h.counts().touchSessionLocks, 1, "the first accepted touch pointer locks the document immediately");
   assert.equal(h.counts().lockRectReads, 0, "the document locks before canvas coordinates or bounds are read");
@@ -193,6 +200,15 @@ function assertPointerMetadataCleared(state) {
   assert.ok(h.state.canvasZoomScale > 1 && h.state.canvasZoomScale <= 2.5);
   assert.ok(h.state.canvasZoomX <= 0 && h.state.canvasZoomY <= 0);
   assert.match(h.canvas.style.transform, /^translate\(/);
+  const zoomTransform = h.canvas.style.transform;
+  h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 100, clientY: 110 });
+  h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 320, clientY: 90 });
+  assert.notEqual(h.canvas.style.transform, zoomTransform, "moving both zoomed pointers keeps an applied pan transform");
+  h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
+  h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 220, clientY: 70 });
+  assert.deepEqual([h.state.canvasZoomScale, h.state.canvasZoomX, h.state.canvasZoomY], [1, 0, 0]);
+  assert.equal(h.canvas.style.transform, "", "pinching exactly back to default zoom removes the inline transform");
+  h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 300, clientY: 70 });
   h.canvas.emit("pointerup", { pointerId: 60, pointerType: "touch" });
   assert.equal(h.state.canvasGestureActive, false);
   assert.equal(h.counts().touchSessionClears, clearsAtStart, "one remaining gesture touch keeps the touch session lock");
@@ -207,6 +223,22 @@ function assertPointerMetadataCleared(state) {
   h.canvas.emit("pointerdown", { pointerId: 63, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
   h.canvas.emit("pointerup", { pointerId: 63, pointerType: "touch" });
   assert.equal(h.state.history.length, 1, "a fresh touch can draw after every gesture finger ends");
+}
+
+{
+  const h = setupHarness();
+  h.canvas.emit("pointerdown", { pointerId: 64, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
+  h.canvas.emit("pointerdown", { pointerId: 65, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  h.canvas.emit("pointermove", { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 70 });
+  assert.match(h.canvas.style.transform, /^translate\(/);
+  h.canvas.emit("pointermove", { pointerId: 65, pointerType: "touch", clientX: 220, clientY: 70 });
+  assert.equal(h.canvas.style.transform, "");
+  h.canvas.emit("pointerup", { pointerId: 64, pointerType: "touch" });
+  h.canvas.emit("pointerup", { pointerId: 65, pointerType: "touch" });
+  h.canvas.emit("pointerdown", { pointerId: 66, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 110 });
+  h.canvas.emit("pointermove", { pointerId: 66, pointerType: "touch", clientX: 120, clientY: 130 });
+  h.canvas.emit("pointerup", { pointerId: 66, pointerType: "touch" });
+  assert.equal(h.state.history.length, 1, "touch drawing still works after a pinch clears the neutral transform");
 }
 
 for (const interruptType of ["blur", "pagehide"]) {
@@ -249,6 +281,7 @@ for (const interruptType of ["blur", "pagehide"]) {
   assert.equal(h.state.canvasZoomScale, 2);
   assert.equal(h.state.canvasZoomX, -300);
   assert.equal(h.state.canvasZoomY, 0, "viewport changes re-clamp the current pan without changing zoom");
+  assert.equal(h.canvas.style.transform, "translate(-300px, 0px) scale(2)", "an enlarged viewport refresh keeps the clamped transform applied");
   h.canvas.emit("pointermove", { pointerId: 70, pointerType: "touch", clientX: 170, clientY: 180 });
   assert.deepEqual(h.state.activeStroke.points.at(-1), { x: 360, y: 360 }, "stroke coordinates use the refreshed canvas rect");
   h.canvas.emit("pointerup", { pointerId: 70, pointerType: "touch", clientX: 170, clientY: 180 });
@@ -604,7 +637,7 @@ for (const endTarget of ["canvas", "window"]) {
   assert.equal(h.state.canvasZoomScale, 1);
   assert.equal(h.state.canvasZoomX, 0);
   assert.equal(h.state.canvasZoomY, 0);
-  assert.equal(h.canvas.style.transform, "translate(0px, 0px) scale(1)");
+  assert.equal(h.canvas.style.transform, "", "route cleanup removes the neutral inline transform");
   assert.equal(h.window.listeners.has("pointerup"), false);
   assert.equal(h.window.listeners.has("pointercancel"), false);
 }

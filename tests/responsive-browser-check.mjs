@@ -221,6 +221,12 @@ try {
   assert.ok(modal.clientHeight < modal.scrollHeight, "short-screen modal must scroll internally");
 
   await render(360, 640, "view=draw");
+  const neutralTransform = await command("Runtime.evaluate", {
+    expression: `(() => { const canvas = document.querySelector("#drawingCanvas"); return { inline: canvas.style.transform, computed: getComputedStyle(canvas).transform }; })()`,
+    returnByValue: true
+  });
+  assert.equal(neutralTransform.result.value.inline, "", "default canvas must have no inline transform in Chrome");
+  assert.equal(neutralTransform.result.value.computed, "none", "Chrome must compute a cleared neutral transform as none");
   await command("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
   const touchSetup = await command("Runtime.evaluate", {
     expression: `(() => {

@@ -1250,12 +1250,12 @@ function canvasTouchPointersIdle() {
   return state.activePointerId === null && !state.canvasGestureActive && !state.canvasGesturePointers?.size && !state.canvasGestureSuppressedPointers?.size;
 }
 function scheduleCanvasTouchFallbackCleanup() {
-  if (!state.canvasTouchIdentifiers?.size || !state.canvasTouchLock || !canvasTouchPointersIdle()) return false;
+  if (!state.canvasTouchLock || !canvasTouchPointersIdle()) return false;
   cancelCanvasTouchFallbackCleanup();
   const lock = state.canvasTouchLock;
   state.canvasTouchCleanupTimer = window.setTimeout(() => {
     state.canvasTouchCleanupTimer = null;
-    if (state.canvasTouchLock === lock && state.canvasTouchIdentifiers?.size && canvasTouchPointersIdle()) clearCanvasTouchSession();
+    if (state.canvasTouchLock === lock && canvasTouchPointersIdle()) clearCanvasTouchSession();
   }, 120);
   return true;
 }
@@ -1279,6 +1279,7 @@ function bindDocumentDrawingScrollBlocker() {
     preventIfCancelable(event);
     const wasEmpty = active.size === 0;
     changedTouchIdentifiers(event).forEach(identifier => active.add(identifier));
+    if (active.size) cancelCanvasTouchFallbackCleanup();
     if (wasEmpty && active.size) lockCanvasTouchSession();
   };
   const move = event => {
@@ -1608,8 +1609,20 @@ function setupCanvas(imageData) {
     return true;
   };
   const start = event => {
+    const now = eventTime(event);
+    const recentPenPalm = state.activePointerType === "pen" && event.pointerType === "touch" &&
+      now !== null && state.activePointerLastEventAt !== null && now >= state.activePointerLastEventAt &&
+      now - state.activePointerLastEventAt < PEN_TOUCH_TAKEOVER_DELAY_MS;
+    if (recentPenPalm) {
+      preventIfCancelable(event);
+      return;
+    }
     if (event.pointerType === "touch") {
       preventIfCancelable(event);
+      if (event.isPrimary !== false && ownsCanvas() && eventTargetsCanvas(event, canvas) &&
+        state.activePointerType !== "touch" && !state.canvasGestureActive && !state.canvasGestureSuppressedPointers.size) {
+        lockCanvasTouchSession();
+      }
       if (state.activePointerType !== "pen") {
         if (state.canvasGestureActive || state.canvasGestureSuppressedPointers.size) {
           state.canvasGesturePointers.set(event.pointerId, viewportPoint(event));
@@ -1630,11 +1643,6 @@ function setupCanvas(imageData) {
     if (state.activePointerId !== null) {
       const replacedPointerId = state.activePointerId;
       const replacedPointerType = state.activePointerType;
-      const now = eventTime(event);
-      const penIsRecent = state.activePointerType === "pen" && event.pointerType === "touch" &&
-        now !== null && state.activePointerLastEventAt !== null && now >= state.activePointerLastEventAt &&
-        now - state.activePointerLastEventAt < PEN_TOUCH_TAKEOVER_DELAY_MS;
-      if (penIsRecent) return;
       finish(null, { releaseCapture: true, commit: true });
       if (replacedPointerType === "touch") state.canvasGesturePointers.delete(replacedPointerId);
     }

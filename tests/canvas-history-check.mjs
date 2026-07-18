@@ -125,7 +125,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   canvas.throwSetCapture = throwSetCapture;
   canvas.throwReleaseCapture = throwReleaseCapture;
   const windowTarget = fakeEventTarget();
-  let drawingQueries = 0, brushQueries = 0, touchSessionClears = 0, touchFallbackSchedules = 0, image;
+  let drawingQueries = 0, brushQueries = 0, touchSessionClears = 0, touchSessionLocks = 0, touchFallbackSchedules = 0, lockRectReads = null, image;
   const warnings = [];
   const state = { route: "draw", canvas: null, ctx: null, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyBaseHasContent: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, canvasInputCleanup: null, drawing: false, activePointerId: null, dirty: false, editImageRequestId: 0 };
   const documentEvents = fakeEventTarget();
@@ -141,11 +141,11 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   windowTarget.visualViewport = fakeEventTarget();
   windowTarget.requestAnimationFrame = callback => { frameCallback = callback; return 1; };
   windowTarget.cancelAnimationFrame = () => { frameCallback = null; };
-  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "clearCanvasTouchSession", "scheduleCanvasTouchFallbackCleanup", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
-    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, () => { touchFallbackSchedules++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
+  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "clearCanvasTouchSession", "lockCanvasTouchSession", "eventTargetsCanvas", "scheduleCanvasTouchFallbackCleanup", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
+    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, () => { touchSessionLocks++; lockRectReads = canvas.rectReads; }, (event, target) => target === canvas, () => { touchFallbackSchedules++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
-  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears, touchFallbackSchedules }) };
+  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears, touchSessionLocks, touchFallbackSchedules, lockRectReads }) };
 }
 function assertPointerMetadataCleared(state) {
   assert.equal(state.activePointerId, null);
@@ -175,11 +175,14 @@ function assertPointerMetadataCleared(state) {
   const h = setupHarness();
   const clearsAtStart = h.counts().touchSessionClears;
   const touchStart = h.canvas.emit("pointerdown", { pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 60, clientY: 70 });
+  assert.equal(h.counts().touchSessionLocks, 1, "the first accepted touch pointer locks the document immediately");
+  assert.equal(h.counts().lockRectReads, 0, "the document locks before canvas coordinates or bounds are read");
   const touchMove = h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 80, clientY: 90 });
   assert.equal(touchStart.prevented, true, "touch drawing blocks the browser gesture only on the canvas input");
   assert.equal(touchMove.prevented, true);
   assert.equal(h.state.dirty, true);
   const pinchStart = h.canvas.emit("pointerdown", { pointerId: 61, pointerType: "touch", isPrimary: false, clientX: 220, clientY: 70 });
+  assert.equal(h.counts().touchSessionLocks, 1, "an additional gesture pointer cannot relock the document");
   assert.equal(pinchStart.prevented, true, "pinch takeover blocks native zoom and scrolling");
   assert.equal(h.state.canvasGestureActive, true);
   assert.equal(h.state.history.length, 0, "the interrupted first-finger stroke is not committed");
@@ -562,21 +565,28 @@ for (const endTarget of ["canvas", "window"]) {
   h.canvas.emit("pointerdown", { pointerId: 10, pointerType: "pen", timeStamp: 100, clientX: 10, clientY: 20 });
   h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 200, clientX: 30, clientY: 40 });
   const activeStroke = h.state.activeStroke;
+  const dirtyBeforePalm = h.state.dirty;
   const beginPaths = h.context.calls.filter(call => call[0] === "beginPath").length;
-  h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
-  h.canvas.emit("pointerdown", { pointerId: 12, pointerType: "touch", isPrimary: false, timeStamp: 320, clientX: 240, clientY: 250 });
+  const primaryPalm = h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
+  const secondaryPalm = h.canvas.emit("pointerdown", { pointerId: 12, pointerType: "touch", isPrimary: false, timeStamp: 320, clientX: 240, clientY: 250 });
+  assert.equal(primaryPalm.prevented, true, "recent pen palm input must block the browser's default gesture");
+  assert.equal(secondaryPalm.prevented, true, "non-primary palm input must also block the browser's default gesture");
+  assert.equal(h.counts().touchSessionLocks, 0, "touches ignored as recent pen palm input cannot start the document lock");
   h.canvas.emit("pointermove", { pointerId: 11, pointerType: "touch", timeStamp: 350, clientX: 220, clientY: 230 });
   h.canvas.emit("pointerup", { pointerId: 11, pointerType: "touch", timeStamp: 400 });
   h.canvas.emit("pointercancel", { pointerId: 11, pointerType: "touch", timeStamp: 450 });
   assert.equal(h.state.activePointerId, 10);
   assert.equal(h.state.activePointerType, "pen");
   assert.equal(h.state.canvasGestureActive, false, "touches cannot start a pinch while pen owns drawing");
+  assert.equal(h.state.canvasGesturePointers.size, 0);
   assert.equal(h.state.activeStroke, activeStroke);
   assert.equal(h.state.history.length, 0);
+  assert.equal(h.state.dirty, dirtyBeforePalm, "ignored palm input cannot change the pen stroke's dirty state");
   assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, beginPaths);
   h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 500, clientX: 50, clientY: 60 });
   h.canvas.emit("pointerup", { pointerId: 10, pointerType: "pen", timeStamp: 550 });
   assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.activePointerId, null, "the pen still completes and cleans up normally after ignored palm input");
   assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }, { x: 80, y: 80 }]);
 }
 

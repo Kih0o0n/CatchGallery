@@ -149,7 +149,7 @@ function solveHarness(sort) {
   const now = 5_000;
   const records = {
     newer: { status: "open", createdAt: 4, expiresAt: 8_000, imageReady: true },
-    older: { status: "open", createdAt: 2, expiresAt: 9_000 },
+    older: { status: "open", createdAt: 2, expiresAt: 9_000, imageData: "legacy" },
     expired: { status: "open", createdAt: 3, expiresAt: 1_000 },
     incomplete: { status: "open", createdAt: 1, expiresAt: 9_000, imageReady: false }
   };
@@ -232,7 +232,7 @@ function galleryHarness() {
     "state", "db", "performance", "isCacheSessionCurrent", "showToast", "console",
     `"use strict"; ${pick("toggleLike")}; return toggleLike;`
   )(state, db, { now: () => 0 }, () => true, () => {}, { info() {} });
-  await toggleLike("a", { id: "a", status: "solved", drawerId: "other" });
+  await toggleLike("a", { id: "a", status: "solved", drawerId: "other", imageReady: true });
   assert.deepEqual(state.galleryLists["solved:new"][0], { id: "a", likeCount: 2, isLiked: true });
   assert.deepEqual(state.galleryLists["solved:old"][0], { id: "a", likeCount: 2, isLiked: true });
   assert.deepEqual(state.galleryMetadata.solved[0], { id: "a", likeCount: 2, isLiked: true });
@@ -267,7 +267,7 @@ function galleryHarness() {
   const state = { user: { id: "owner" } };
   const snapshot = makeSnapshot({
     ready: { drawerId: "owner", createdAt: 3, imageReady: true },
-    legacy: { drawerId: "owner", createdAt: 2 },
+    legacy: { drawerId: "owner", createdAt: 2, imageData: "data:image/png;base64,legacy" },
     incomplete: { drawerId: "owner", createdAt: 4, imageReady: false },
     other: { drawerId: "other", createdAt: 5, imageReady: true }
   });

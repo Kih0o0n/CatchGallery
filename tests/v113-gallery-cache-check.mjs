@@ -95,7 +95,8 @@ function submitHarness({ drawing, answer = "정답", transactionMode = "normal",
 
 const openDrawing = {
   status: "open", drawerId: "drawer", drawerNickname: "그린이", solverId: null,
-  word: "정답", answers: ["정답", "허용 정답"], expiresAt: 3_000, revisionCount: 0, likeCount: 0
+  word: "정답", answers: ["정답", "허용 정답"], expiresAt: 3_000, revisionCount: 0, likeCount: 0,
+  imageReady: true
 };
 
 {

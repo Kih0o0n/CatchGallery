@@ -386,6 +386,11 @@ function initFirebase() {
 }
 function serverNow() { return Date.now() + serverTimeOffset; }
 function escapeHtml(value = "") { const d = document.createElement("div"); d.textContent = String(value); return d.innerHTML; }
+function isSafeRecordId(value) { return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value); }
+function escapeAttribute(value = "") { return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function selectorRecordId(value) { return isSafeRecordId(value) ? (globalThis.CSS?.escape ? CSS.escape(value) : value) : ""; }
+function hasPublicDrawingImage(drawing) { return !!drawing?.imageData || drawing?.imageReady === true; }
+function safeRecordOrWarn(kind, id) { if (isSafeRecordId(id)) return true; console.warn(`[security] 안전하지 않은 ${kind} ID를 표시에서 제외했습니다.`, id); return false; }
 function safeObject(value) { return value && typeof value === "object" ? value : {}; }
 function drawerName(d) { return d.drawerNickname || d.drawerDisplayName || "알 수 없음"; }
 function solverName(d) { return d.solverNickname || d.solverDisplayName || "알 수 없음"; }
@@ -586,6 +591,7 @@ async function optimizeDataUrl(dataUrl) {
   return validateOptimizedImages(optimized);
 }
 async function loadDrawingImage(drawing, kind = "detail") {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(drawing?.id || "") || (!drawing?.imageData && drawing?.imageReady !== true)) throw new Error("표시할 수 없는 그림이에요.");
   const cache = kind === "thumbnail" ? state.thumbnailCache : state.detailImageCache;
   if (cache.has(drawing.id)) return cache.get(drawing.id);
   const generation = state.cacheGeneration;
@@ -1901,7 +1907,7 @@ async function publishDrawing() {
     imageHeight: optimized.imageHeight,
     imageBytes: optimized.imageBytes,
     thumbnailBytes: optimized.thumbnailBytes,
-    imageReady: true,
+    imageReady: false,
     drawerId: state.user.id,
     drawerNickname: state.user.nickname,
     status: "open",
@@ -1925,13 +1931,13 @@ async function publishDrawing() {
       [`drawingImages/${id}/imageData`]: optimized.imageData,
       [`drawingThumbnails/${id}/imageData`]: optimized.thumbnailData
     });
-    await db.ref().update({ [`userDrawings/${state.user.id}/${id}`]: true });
+    await db.ref().update({ [`drawings/${id}/imageReady`]: true, [`userDrawings/${state.user.id}/${id}`]: true });
   } catch (error) {
     console.error("그림 이미지 저장 실패:", error?.code || "unknown", error);
     try {
       await db.ref().update({ [`drawingImages/${id}`]: null, [`drawingThumbnails/${id}`]: null });
       await ref.update({ status: "withdrawn", withdrawnAt: serverNow(), updatedAt: serverNow() });
-    } catch (cleanupError) { console.error("불완전한 그림 정리 실패:", cleanupError); }
+    } catch (cleanupError) { console.error(`불완전한 그림 정리 실패: drawingImages/${id}, drawingThumbnails/${id}, drawings/${id}`, cleanupError); }
     throw error;
   }
   return { id, imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
@@ -1988,7 +1994,8 @@ async function loadOpenDrawings(sort = "new") {
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
-    if (d.imageReady !== false && Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
+    if (/^[A-Za-z0-9_-]{1,80}$/.test(child.key) && (d.imageData || d.imageReady === true) && Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
+    else if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) console.warn("[security] 안전하지 않은 drawing ID를 표시에서 제외했습니다.", child.key);
   });
   return list.sort((a, b) => sort === "new" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
 }
@@ -2057,9 +2064,11 @@ function showCategoryHint(button, drawingsById) {
   button.textContent = `카테고리: ${drawingsById.get(button.dataset.hint)?.category || "알 수 없음"}`;
 }
 function openDrawingCard(d, recentSuccesses = 0) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(d?.id || "")) return "";
+  const id = String(d.id).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const mine = isOwnDrawing(d);
   const usedHint = !!state.hintUsed[d.id];
-  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-recent-successes="${recentSuccesses}" ${usedHint ? "disabled" : ""}>${usedHint ? `카테고리: ${escapeHtml(d.category)}` : "카테고리 힌트 보기 (-4점)"}</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, usedHint)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+  return `<article class="card drawing-card" data-solve-card="${id}"><div class="solve-image-slot" data-solve-slot="${id}"><img data-solve-image="${id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${id}" data-recent-successes="${recentSuccesses}" ${usedHint ? "disabled" : ""}>${usedHint ? `카테고리: ${escapeHtml(d.category)}` : "카테고리 힌트 보기 (-4점)"}</button><div class="answer-reward" data-answer-reward="${id}">${solverRewardHtml(recentSuccesses, usedHint)}</div><form class="answer-row" data-answer-form="${id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 function cancelSolveImageLoading() {
   state.solveObserver?.disconnect();
@@ -2211,7 +2220,7 @@ async function loadGalleryMetadata(status) {
       const list = [];
       snap.forEach(child => {
         const d = child.val() || {};
-        if (d.imageReady === false) return;
+        if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key) || (!d.imageData && d.imageReady !== true)) { if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) console.warn("[security] 안전하지 않은 drawing ID를 표시에서 제외했습니다.", child.key); return; }
         const cachedLike = state.likeCache.get(child.key);
         list.push({ ...d, likeCount: cachedLike?.count ?? (Number(d.likeCount) || 0), isLiked: cachedLike?.liked ?? false, id: child.key });
       });
@@ -2739,7 +2748,8 @@ async function loadManageDrawings() {
   const drawings = [];
   snap.forEach(child => {
     const drawing = child.val() || {};
-    if (drawing.drawerId === userId && drawing.imageReady !== false) drawings.push({ ...drawing, id: child.key });
+    if (drawing.drawerId === userId && /^[A-Za-z0-9_-]{1,80}$/.test(child.key) && (drawing.imageData || drawing.imageReady === true)) drawings.push({ ...drawing, id: child.key });
+    else if (drawing.drawerId === userId && !/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) console.warn("[security] 안전하지 않은 drawing ID를 표시에서 제외했습니다.", child.key);
   });
   return drawings.sort((a, b) => b.createdAt - a.createdAt);
 }
@@ -2811,6 +2821,7 @@ async function renderManage() {
   }
 }
 function manageCard(d) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(d?.id || "")) return "";
   return `<article class="card drawing-card" data-manage-card="${d.id}"><div class="solve-image-slot manage-image-slot" data-manage-slot="${d.id}">${manageImageMarkup(d.id)}</div><div class="meta"><span class="badge ${d.status}">${STATUS_LABEL[d.status]}</span><span>제시어: ${escapeHtml(d.word)}</span>${d.status === "open" ? `<span>남은 시간: ${formatTime(d.expiresAt)}</span><span>수정 ${Number(d.revisionCount) || 0}회</span>` : ""}</div>${d.status === "open" ? `<div class="notice">정답을 맞히면 그린 사람에게 30점!</div><div class="button-row"><button class="button secondary" data-edit="${d.id}">수정하기</button><button class="button danger" data-withdraw="${d.id}">회수하기</button></div>` : d.status === "solved" ? `<p>맞힌 사람: <b>${escapeHtml(solverName(d))}</b><br>획득 점수: <b>${Number(d.drawerReward) || 0}점</b></p>` : d.status === "expired" ? "<p>아무도 맞히지 못했어요.<br>획득 점수: <b>0점</b></p>" : '<p class="muted">회수한 그림은 다시 복구할 수 없어요.</p>'}</article>`;
 }
 function feedbackOperationContext(request = null) {
@@ -2869,6 +2880,7 @@ function loadFeedbackSnapshot(preferCache = false) {
     const reactions = safeObject(reactionsSnap.val());
     const items = [];
     metaSnap.forEach(child => {
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) { console.warn("[security] 안전하지 않은 feedback ID를 표시에서 제외했습니다.", child.key); return; }
       const meta = { id: child.key, ...child.val(), isMine: !!mine[child.key] };
       recalculateFeedbackReaction(meta, safeObject(reactions[child.key]), context.uid);
       items.push(meta);
@@ -3090,16 +3102,18 @@ async function renderFeedback(preferCache = false) {
   }
 }
 function feedbackCard(f) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(f?.id || "")) return "";
+  const id = String(f.id).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const canRead = feedbackCanRead(f);
-  const body = !canRead ? '<div class="secret-feedback">🔒 내용을 볼 수 없는 글입니다.</div>' : f.content ? `<div data-feedback-body="${f.id}"><p class="feedback-content">${escapeHtml(f.content.content || "")}</p>${f.content.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : ""}</div>` : `<div data-feedback-body="${f.id}"><span class="feedback-content-loading">내용을 불러오는 중…</span></div>`;
+  const body = !canRead ? '<div class="secret-feedback">🔒 내용을 볼 수 없는 글입니다.</div>' : f.content ? `<div data-feedback-body="${id}"><p class="feedback-content">${escapeHtml(f.content.content || "")}</p>${f.content.adminReply ? `<div class="admin-reply"><b>💬 운영자 답변</b><p>${escapeHtml(f.content.adminReply)}</p></div>` : ""}</div>` : `<div data-feedback-body="${id}"><span class="feedback-content-loading">내용을 불러오는 중…</span></div>`;
   const canReact = feedbackCanReact(f);
   const reactionPending = state.feedbackPending.has(feedbackPendingKey("reaction", f.id));
   const editPending = state.feedbackPending.has(feedbackPendingKey("edit", f.id));
   const deletePending = state.feedbackPending.has(feedbackPendingKey("delete", f.id));
   const replyPending = state.feedbackPending.has(feedbackPendingKey("reply", f.id));
   const hidePending = state.feedbackPending.has(feedbackPendingKey("hide", f.id));
-  const reactions = canReact ? `<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${f.id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👍 ${Number(f.likeCount) || 0}`}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${f.id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👎 ${Number(f.dislikeCount) || 0}`}</button></div>` : "";
-  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}" data-feedback-id="${f.id}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reactions}${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${f.id}" ${editPending || !f.content ? "disabled" : ""}>${editPending ? "저장 중…" : "수정"}</button><button class="button danger" data-delete-feedback="${f.id}" ${deletePending ? "disabled" : ""}>${deletePending ? "삭제 중…" : "삭제"}</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${f.id}" maxlength="300" placeholder="운영자 답변" ${replyPending ? "disabled" : ""}>${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${f.id}" ${replyPending || !f.content ? "disabled" : ""}>${replyPending ? "저장 중…" : f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${f.id}" data-hidden="${f.hidden}" ${hidePending ? "disabled" : ""}>${hidePending ? "처리 중…" : f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
+  const reactions = canReact ? `<div class="reaction-row"><button class="feedback-reaction like ${f.myReaction === "like" ? "is-active" : ""}" data-react="like" data-id="${id}" aria-pressed="${f.myReaction === "like" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👍 ${Number(f.likeCount) || 0}`}</button><button class="feedback-reaction dislike ${f.myReaction === "dislike" ? "is-active" : ""}" data-react="dislike" data-id="${id}" aria-pressed="${f.myReaction === "dislike" ? "true" : "false"}" ${reactionPending ? "disabled" : ""}>${reactionPending ? "처리 중…" : `👎 ${Number(f.dislikeCount) || 0}`}</button></div>` : "";
+  return `<article class="card feedback-card ${f.hidden ? "is-hidden" : ""}" data-feedback-id="${id}"><div class="feedback-head"><b>${f.isSecret ? "🔒 " : ""}${escapeHtml(f.displayAuthor)}</b><span>${f.status === "answered" ? "답변 완료" : "답변 대기"}${f.hidden ? " · 숨김" : ""}</span></div>${body}${reactions}${f.isMine ? `<div class="button-row compact"><button class="button ghost" data-edit-feedback="${id}" ${editPending || !f.content ? "disabled" : ""}>${editPending ? "저장 중…" : "수정"}</button><button class="button danger" data-delete-feedback="${id}" ${deletePending ? "disabled" : ""}>${deletePending ? "삭제 중…" : "삭제"}</button></div>` : ""}${state.isAdmin ? `<div class="admin-tools"><textarea data-reply-text="${id}" maxlength="300" placeholder="운영자 답변" ${replyPending ? "disabled" : ""}>${escapeHtml(f.content?.adminReply || "")}</textarea><div class="button-row compact"><button class="button secondary" data-admin-reply="${id}" ${replyPending || !f.content ? "disabled" : ""}>${replyPending ? "저장 중…" : f.content?.adminReply ? "답변 수정" : "답변하기"}</button><button class="button ghost" data-admin-hide="${id}" data-hidden="${f.hidden}" ${hidePending ? "disabled" : ""}>${hidePending ? "처리 중…" : f.hidden ? "다시 보이기" : "숨기기"}</button></div></div>` : ""}</article>`;
 }
 async function performFeedbackOperation(type, id, request, operation) {
   const context = feedbackOperationContext(request);
@@ -3155,7 +3169,7 @@ function bindFeedback(list, request = beginScreenRequest("feedback")) {
   }));
   document.querySelectorAll("[data-admin-reply]").forEach(button => button.onclick = async () => {
     const id = button.dataset.adminReply;
-    const reply = document.querySelector(`[data-reply-text="${id}"]`).value;
+    const reply = document.querySelector(`[data-reply-text="${selectorRecordId(id)}"]`).value;
     const result = await performFeedbackOperation("reply", id, request, context => saveAdminReply(id, reply, context));
     if (result.ok) { showToast("답변을 저장했어요."); renderFeedback(true); }
     else if (result.error) { showToast(userErrorMessage(result.error)); if (result.refresh) renderFeedback(true); }
@@ -3242,6 +3256,7 @@ async function resolveDrawingId(drawingId) {
   return found || drawingId;
 }
 async function submitAnswer(drawingId, answer, hintUsed) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(drawingId || "")) return { correct: false, message: "표시할 수 없는 그림이에요." };
   answer = String(answer || "").trim();
   if (!answer) return { correct: false, message: "정답을 입력해 주세요." };
 
@@ -3255,7 +3270,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   // transaction 전에 한 번 읽어 둔 값을 안전한 fallback으로 사용한다.
   const beforeSnap = await drawingRef.once("value");
   const fallbackDrawing = beforeSnap.val();
-  if (!fallbackDrawing) return { correct: false, message: "그림을 찾을 수 없어요." };
+  if (!fallbackDrawing || (!fallbackDrawing.imageData && fallbackDrawing.imageReady !== true)) return { correct: false, message: "그림을 찾을 수 없어요." };
 
   const now = serverNow();
   const recentSuccesses = await loadRecentSolverSuccessCount();
@@ -3324,12 +3339,13 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   return outcome;
 }
 async function toggleLike(drawingId, cachedDrawing = null) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(drawingId || "")) throw new Error("좋아요를 누를 수 없는 그림이에요.");
   const started = performance.now();
   const userId = state.user?.id;
   const generation = state.cacheGeneration;
   if (!userId) throw new Error("로그인이 필요해요.");
   const drawing = cachedDrawing || (await db.ref(`drawings/${drawingId}`).once("value")).val();
-  if (!drawing || !["solved", "expired"].includes(drawing.status)) throw new Error("좋아요를 누를 수 없는 그림이에요.");
+  if (!drawing || (!drawing.imageData && drawing.imageReady !== true) || !["solved", "expired"].includes(drawing.status)) throw new Error("좋아요를 누를 수 없는 그림이에요.");
   if (drawing.drawerId === userId) throw new Error("내 그림에는 좋아요를 누를 수 없어요.");
   let liked = false;
   const result = await db.ref(`drawingLikes/${drawingId}/${userId}`).transaction(value => {
@@ -3354,6 +3370,7 @@ async function toggleLike(drawingId, cachedDrawing = null) {
   return next;
 }
 async function toggleFeedbackReaction(id, next, context = feedbackOperationContext()) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id || "")) throw new Error("이 의견에는 반응할 수 없어요.");
   const meta = feedbackMetaById(id);
   if (!feedbackCanReact(meta) || !isFeedbackContextCurrent(context)) throw new Error("이 의견에는 반응할 수 없어요.");
   const uid = context.uid;

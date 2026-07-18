@@ -152,7 +152,7 @@ function sessionHarness() {
   const gate = deferred(); let path = "", toasts = 0;
   const db = { ref: value => { path = value; return { transaction: () => gate.promise }; } };
   const toggleLike = Function("state", "db", "performance", "isCacheSessionCurrent", "showToast", "console", `${pickAsync("toggleLike")}; return toggleLike;`)(h.state, db, { now: () => 0 }, h.isCacheSessionCurrent, () => { toasts++; }, { info() {} });
-  const pending = toggleLike("drawing", { id: "drawing", status: "solved", drawerId: "owner" });
+  const pending = toggleLike("drawing", { id: "drawing", status: "solved", drawerId: "owner", imageReady: true });
   assert.equal(path, "drawingLikes/drawing/a", "transaction path is owned by the starting user");
   h.state.user = { id: "b" }; h.setCacheSession("b");
   h.state.likeCache.set("new-user", { liked: false, count: 4 });

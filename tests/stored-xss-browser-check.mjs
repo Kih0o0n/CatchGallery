@@ -10,12 +10,19 @@ const app = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const categorySource = app.match(/function textLength[\s\S]*?(?=function dataUrlBytes)/)?.[0];
 const hintSource = app.match(/function showCategoryHint[\s\S]*?(?=function openDrawingCard)/)?.[0];
 const cardSource = app.match(/function openDrawingCard[\s\S]*?(?=function cancelSolveImageLoading)/)?.[0];
-assert.ok(categorySource && hintSource && cardSource);
+const feedbackCardSource = app.match(/function feedbackCard[\s\S]*?(?=async function performFeedbackOperation)/)?.[0];
+const idHelpersSource = app.match(/function isSafeRecordId[\s\S]*?(?=function safeObject)/)?.[0];
+assert.ok(categorySource && hintSource && cardSource && feedbackCardSource && idHelpersSource);
+const { isSafeRecordId, escapeAttribute } = Function(`${idHelpersSource}; return { isSafeRecordId, escapeAttribute };`)();
 const isValidCategory = Function(`${categorySource}; return isValidCategory;`)();
 assert.equal(isValidCategory("운동과 놀이"), true);
 for (const unsafe of ['x" onfocus="x=1', "a<b", "a>b", "a'b", "a`b", "a=b"]) assert.equal(isValidCategory(unsafe), false, `${JSON.stringify(unsafe)} must be rejected for a new custom drawing`);
 const state = { hintUsed: {} };
-const openDrawingCard = Function("state", "isOwnDrawing", "formatTime", "escapeHtml", "solverRewardHtml", `${cardSource}; return openDrawingCard;`)(state, () => false, () => "1시간", value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"), () => "");
+const openDrawingCard = Function("state", "isOwnDrawing", "formatTime", "escapeHtml", "solverRewardHtml", "isSafeRecordId", "escapeAttribute", `${cardSource}; return openDrawingCard;`)(state, () => false, () => "1시간", value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"), () => "", isSafeRecordId, escapeAttribute);
+const feedbackCard = Function("isSafeRecordId", "escapeAttribute", `${feedbackCardSource}; return feedbackCard;`)(isSafeRecordId, escapeAttribute);
+const maliciousId = 'x" onfocus="globalThis.idXss=1';
+assert.equal(openDrawingCard({ id: maliciousId }, 0), "");
+assert.equal(feedbackCard({ id: maliciousId }), "");
 const drawings = [
   { id: "attack", category: 'x" onfocus="x=1', expiresAt: Date.now() + 1000 },
   { id: "korean", category: "운동과 놀이", expiresAt: Date.now() + 1000 },
@@ -40,8 +47,9 @@ if (!chrome) {
 const temp = mkdtempSync(join(tmpdir(), "catchgallery-xss-"));
 try {
   const encodedDrawings = Buffer.from(JSON.stringify(drawings), "utf8").toString("base64");
-  const html = `<!doctype html><meta charset="utf-8"><body>${markup}<output id="result"></output><script>
+  const html = `<!doctype html><meta charset="utf-8"><body>${markup}<div id="unsafe-drawing">${openDrawingCard({ id: maliciousId }, 0)}</div><div id="unsafe-feedback">${feedbackCard({ id: maliciousId })}</div><output id="result"></output><script>
     globalThis.x = undefined;
+    globalThis.idXss = undefined;
     const drawings = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob("${encodedDrawings}"), c => c.charCodeAt(0))));
     ${hintSource}
     const drawingsById = new Map(drawings.map(drawing => [drawing.id, drawing]));
@@ -61,13 +69,16 @@ try {
     const thumbnailCanvas = document.createElement("canvas"); thumbnailCanvas.width = thumbnailCanvas.height = 240; thumbnailCanvas.getContext("2d").drawImage(detailCanvas, 0, 0, 240, 240);
     const thumbnail = thumbnailCanvas.toDataURL("image/webp", 0.82);
     const bytes = value => Math.floor((value.split(",")[1] || "").length * 3 / 4) - ((value.match(/=*$/) || [""])[0].length);
-    result.textContent = JSON.stringify({ x: globalThis.x ?? null, onfocus: attack.hasAttribute("onfocus"), attributes: [...attack.attributes].map(a => a.name), attack: attack.textContent, korean: document.querySelector('[data-hint="korean"]').textContent, normal: document.querySelector('[data-hint="default"]').textContent, encoder: { detailChars: detail.length, imageBytes: bytes(detail), thumbnailChars: thumbnail.length, thumbnailBytes: bytes(thumbnail) } });
+    result.textContent = JSON.stringify({ x: globalThis.x ?? null, idXss: globalThis.idXss ?? null, unsafeDrawing: document.querySelector("#unsafe-drawing").children.length, unsafeFeedback: document.querySelector("#unsafe-feedback").children.length, onfocus: attack.hasAttribute("onfocus"), attributes: [...attack.attributes].map(a => a.name), attack: attack.textContent, korean: document.querySelector('[data-hint="korean"]').textContent, normal: document.querySelector('[data-hint="default"]').textContent, encoder: { detailChars: detail.length, imageBytes: bytes(detail), thumbnailChars: thumbnail.length, thumbnailBytes: bytes(thumbnail) } });
   </script></body>`;
   const fixture = join(temp, "xss.html");
   writeFileSync(fixture, html);
   const output = execFileSync(chrome, ["--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run", "--disable-background-networking", `--user-data-dir=${join(temp, "profile")}`, "--dump-dom", pathToFileURL(fixture).href], { encoding: "utf8", timeout: 30_000 });
   const result = JSON.parse(output.match(/<output id="result">([^<]+)<\/output>/)?.[1].replaceAll("&quot;", '"') || "null");
   assert.equal(result.x, null);
+  assert.equal(result.idXss, null);
+  assert.equal(result.unsafeDrawing, 0);
+  assert.equal(result.unsafeFeedback, 0);
   assert.equal(result.onfocus, false);
   assert.deepEqual(result.attributes.sort(), ["class", "data-hint", "data-recent-successes"].sort());
   assert.equal(result.attack, '카테고리: x" onfocus="x=1');

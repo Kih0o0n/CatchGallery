@@ -316,6 +316,8 @@ body.canvas-touch-session-lock {
     grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
     gap: 4px;
     padding-top: 4px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
     padding-bottom: max(4px, env(safe-area-inset-bottom));
     animation: none;
   }

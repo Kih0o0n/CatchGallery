@@ -221,6 +221,8 @@ try {
     assert.equal(portrait.documentScroll, false);
     assert.equal(portrait.saveVisible, true);
   }
+  assert.ok(portraitObservations.find(item => item.viewport === "390x844").canvas >= 373, `390x844 canvas must use the widened draw content: ${JSON.stringify(portraitObservations)}`);
+  assert.ok(portraitObservations.find(item => item.viewport === "412x915").canvas >= 395, `412x915 canvas must use the widened draw content: ${JSON.stringify(portraitObservations)}`);
   for (const [width, height] of [[768,1024],[820,1180],[1024,1366]]) {
     const portrait = await render(width, height, "view=draw");
     const expectedWidth = Math.min(portrait.drawContentWidth, 720);

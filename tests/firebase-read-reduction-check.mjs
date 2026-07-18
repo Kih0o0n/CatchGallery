@@ -355,9 +355,9 @@ function rankingHarness(claims, drawings = {}) {
 {
   const state = { route: "ranking", rankingSnapshot: [{}], rankingSnapshotPromise: Promise.resolve([]), seenWordKeys: new Set(), editDrawing: null };
   const transitionRoute = Function(
-    "state", "cleanupScreenResources", "history", "renderRoute",
+    "state", "cleanupScreenResources", "history", "renderRoute", "setDrawViewportMode",
     `"use strict"; let routeTransitionId = 0; ${pick("transitionRoute")}; return transitionRoute;`
-  )(state, () => {}, { pushState() {}, replaceState() {} }, () => {});
+  )(state, () => {}, { pushState() {}, replaceState() {} }, () => {}, () => {});
   transitionRoute("home");
   assert.equal(state.rankingSnapshot, null); assert.equal(state.rankingSnapshotPromise, null);
 }

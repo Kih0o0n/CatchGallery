@@ -84,7 +84,7 @@ function classList(initial = []) {
   for (const id of ["drawingCanvas", "brushSize", "eraser", "undo", "clearCanvas", "saveDrawing", "customWordForm", "customWordButton"]) {
     assert.equal((appEl.innerHTML.match(new RegExp(`id="${id}"`, "g")) || []).length, 1, `${id} must appear once`);
   }
-  assert.match(appEl.innerHTML, /<canvas id="drawingCanvas" width="720" height="720"/);
+  assert.match(appEl.innerHTML, /<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720"/);
   assert.equal((appEl.innerHTML.match(/data-color=/g) || []).length, drawingColors.length);
   assert.match(appEl.innerHTML, /<div class="tools"><div class="drawing-palette"><div class="colors"[\s\S]*id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
   assert.ok(appEl.innerHTML.indexOf('class="card word-card"') < appEl.innerHTML.indexOf('class="custom-word-form hidden"'));
@@ -101,9 +101,11 @@ function classList(initial = []) {
   customWordButton.onclick();
   assert.equal(customWordForm.classList.contains("hidden"), false);
   assert.equal(drawScreen.classList.contains("custom-word-open"), true);
+  drawScreen.scrollTop = 47;
   customWordButton.onclick();
   assert.equal(customWordForm.classList.contains("hidden"), true);
   assert.equal(drawScreen.classList.contains("custom-word-open"), false);
+  assert.equal(drawScreen.scrollTop, 0, "closing the custom word form must reset internal scrolling before the canvas re-expands");
 }
 
 // Execute the existing card builders and verify the data contracts consumed by
@@ -137,8 +139,11 @@ assert.match(styles, /@media \(min-width: 540px\) and \(max-width: 639px\)[\s\S]
 assert.match(styles, /@media \(min-width: 700px\)[\s\S]*\.answer-row\s*\{ position:\s*static/);
 assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);
-assert.match(styles, /\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*100%[^}]*max-width:\s*720px/);
-assert.match(styles, /@media \(max-width:\s*699px\) and \(orientation:\s*portrait\)[\s\S]*?\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*min\(100%,\s*clamp\(180px,\s*calc\(100dvh - 447px\),\s*54dvh\),\s*720px\)/);
+assert.match(styles, /\.draw-screen \.canvas-stage\s*\{[^}]*grid-area:\s*canvas[^}]*min-height:\s*0[^}]*place-items:\s*center/);
+assert.match(styles, /@media \(max-width:\s*699px\) and \(orientation:\s*portrait\)[\s\S]*html\.draw-viewport-active,[\s\S]*height:\s*100svh[^}]*overflow:\s*hidden/);
+assert.match(styles, /@media \(max-width:\s*699px\) and \(orientation:\s*portrait\)[\s\S]*\.draw-screen \.canvas-stage\s*\{[^}]*container-type:\s*size[^}]*\}[\s\S]*\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*min\(100%,\s*100cqh,\s*720px\)/);
+assert.doesNotMatch(styles, /calc\(100dvh - 447px\)|54dvh/);
+assert.match(app, /function setDrawViewportMode\(active\)[\s\S]*document\.documentElement\.classList\.toggle\("draw-viewport-active", active\)[\s\S]*document\.body\.classList\.toggle\("draw-viewport-active", active\)/);
 assert.match(styles, /#drawingCanvas\s*\{[^}]*transform-origin:\s*0 0/);
 assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transition/);
 assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas\s*\{[^}]*touch-action:\s*none/);
@@ -149,7 +154,7 @@ assert.doesNotMatch(app.match(/function setupCanvas[\s\S]*?(?=function undoCanva
 assert.match(app, /visualViewport\?\.addEventListener\("resize", scheduleViewportRefresh\)/);
 assert.match(app, /visualViewport\?\.addEventListener\("scroll", scheduleViewportRefresh\)/);
 assert.match(app, /window\.addEventListener\("orientationchange", scheduleViewportRefresh\)/);
-assert.match(fixture, /<div class="card word-card"[\s\S]*<form class="custom-word-form hidden"[\s\S]*<canvas id="drawingCanvas" width="720" height="720"[\s\S]*<button id="saveDrawing"/);
+assert.match(fixture, /<div class="card word-card"[\s\S]*<form class="custom-word-form hidden"[\s\S]*<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720"[\s\S]*<button id="saveDrawing"/);
 assert.match(fixture, /drawingColors = JSON\.parse\(params\.get\("colors"\)/);
 assert.match(fixture, /<div id="galleryContent"><div class="frame"[\s\S]*<div class="frame-nav"[\s\S]*<div class="frame-info"/);
 

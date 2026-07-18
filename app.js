@@ -609,8 +609,13 @@ function cleanupScreenResources() {
   state.activeSaveOperationId = null;
   state.publishing = false;
 }
+function setDrawViewportMode(active) {
+  document.documentElement.classList.toggle("draw-viewport-active", active);
+  document.body.classList.toggle("draw-viewport-active", active);
+}
 function transitionRoute(name, { historyMode = "push", historyState = null, renderOptions = {} } = {}) {
   const previousRoute = state.route;
+  setDrawViewportMode(name === "draw" && !!state.user);
   cleanupScreenResources();
   if (previousRoute === "ranking" && name !== "ranking") {
     state.rankingSnapshot = null;
@@ -984,6 +989,7 @@ function renderRoute(_options = {}, _transitionId = routeTransitionId) {
   headerEl.classList.toggle("hidden", publicRoute);
   if (!publicRoute && !state.user) {
     state.route = "login";
+    setDrawViewportMode(false);
     return renderLogin();
   }
   const routes = { login: renderLogin, home: renderHome, draw: renderDraw, solve: renderSolve, gallery: renderGallery, ranking: renderRanking, manage: renderManage, guide: renderGuide, feedback: renderFeedback };
@@ -1070,7 +1076,7 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필" aria-pressed="${i === 0 ? "true" : "false"}"></button>`).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필" aria-pressed="${i === 0 ? "true" : "false"}"></button>`).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
   eraser.onclick = () => {
@@ -1091,6 +1097,7 @@ function renderDraw() {
       const opening = customWordForm.classList.contains("hidden");
       customWordForm.classList.toggle("hidden", !opening);
       document.querySelector(".draw-screen").classList.toggle("custom-word-open", opening);
+      if (!opening) document.querySelector(".draw-screen").scrollTop = 0;
       customWordButton.setAttribute("aria-expanded", String(opening));
       if (opening) customCategory.focus();
     };
@@ -1115,7 +1122,9 @@ function renderDraw() {
       document.querySelector(".custom-answer-summary")?.remove();
       if (answers.length > 1) document.querySelector(".word-card").insertAdjacentHTML("beforeend", `<small class="custom-answer-summary">허용 정답: ${answers.slice(1).map(escapeHtml).join(", ")}</small>`);
       customWordForm.classList.add("hidden");
-      document.querySelector(".draw-screen").classList.remove("custom-word-open");
+      const drawScreen = document.querySelector(".draw-screen");
+      drawScreen.classList.remove("custom-word-open");
+      drawScreen.scrollTop = 0;
       customWordButton.setAttribute("aria-expanded", "false");
       showToast("직접 제시어를 적용했어요!");
     };

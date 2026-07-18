@@ -60,13 +60,25 @@ function deferred() {
   const state = { route: "home", galleryView: "thumb", galleryIndex: 0, seenWordKeys: new Set(), editDrawing: null };
   const calls = [];
   const history = { pushState: () => calls.push("push"), replaceState: () => calls.push("replace") };
-  const transitionRoute = Function("state", "history", "cleanupScreenResources", "renderRoute", `${"let routeTransitionId = 0;"} ${transitionSource}; return transitionRoute;`)(
-    state, history, () => calls.push("cleanup"), () => calls.push("render")
+  const transitionRoute = Function("state", "history", "cleanupScreenResources", "renderRoute", "setDrawViewportMode", `${"let routeTransitionId = 0;"} ${transitionSource}; return transitionRoute;`)(
+    state, history, () => calls.push("cleanup"), () => calls.push("render"), active => calls.push(`viewport:${active}`)
   );
   transitionRoute("gallery", { historyMode: "pop", historyState: { route: "gallery", galleryDetail: true, galleryIndex: 3 } });
-  assert.deepEqual(calls, ["cleanup", "render"], "popstate transitions must use the same cleanup/render flow without writing history");
+  assert.deepEqual(calls, ["viewport:false", "cleanup", "render"], "popstate transitions must clear draw viewport mode before cleanup/render without writing history");
   assert.equal(state.galleryView, "frame");
   assert.equal(state.galleryIndex, 3, "gallery detail history must restore the selected drawing");
+}
+
+{
+  const state = { route: "home", user: { id: "user" }, galleryView: "thumb", galleryIndex: 0, seenWordKeys: new Set(), editDrawing: null };
+  const modes = [];
+  const transitionRoute = Function("state", "history", "cleanupScreenResources", "renderRoute", "setDrawViewportMode", `${"let routeTransitionId = 0;"} ${transitionSource}; return transitionRoute;`)(
+    state, { pushState() {}, replaceState() {} }, () => {}, () => {}, active => modes.push(active)
+  );
+  transitionRoute("draw");
+  transitionRoute("home");
+  transitionRoute("draw");
+  assert.deepEqual(modes, [true, false, true], "draw viewport class lifecycle must be repeatable across route entry and exit");
 }
 
 {

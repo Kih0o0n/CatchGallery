@@ -177,9 +177,15 @@ try {
       assert.ok(metrics.paletteRect.bottom <= metrics.documentHeight + 1, `${width}x${height} palette must remain reachable by viewport or document scroll`);
       assert.ok(metrics.eraserRect && metrics.eraserRect.top >= metrics.colorsRect.bottom && metrics.eraserRect.bottom <= metrics.documentHeight + 1, `${width}x${height} eraser must remain directly below the colors and reachable`);
     } else if (height >= width) {
-      assert.ok(metrics.paletteRect.top >= metrics.canvasRect.bottom, `${width}x${height} portrait tools must remain below the canvas`);
+      assert.ok(metrics.colorsRect.top >= metrics.canvasRect.bottom, `${width}x${height} portrait tools must remain below the canvas`);
     }
-    if (!metrics.saveVisible) assert.equal(metrics.documentScroll, true, `${width}x${height} must scroll when save is below the fold`);
+    if (width <= 699 && height >= width) {
+      assert.equal(metrics.documentScroll, false, `${width}x${height} mobile portrait document must not scroll`);
+      assert.equal(metrics.saveVisible, true, `${width}x${height} save button must remain fully visible: ${JSON.stringify(metrics)}`);
+      assert.ok(metrics.requiredRects.every(rect => rect.left >= -1 && rect.right <= width + 1 && rect.top >= -1 && rect.bottom <= height + 1), `${width}x${height} drawing controls must remain inside the viewport`);
+      const expectedCanvas = Math.min(metrics.stageRect.width, metrics.stageRect.height, 720);
+      assert.ok(Math.abs(metrics.canvas[0] - expectedCanvas) <= 1, `${width}x${height} canvas must maximize the available stage: ${JSON.stringify(metrics)}`);
+    }
     results.push({ viewport: `${width}x${height}`, ...metrics });
   }
   const narrowLandscape = results.find(result => result.viewport[0] === 568 && result.viewport[1] === 320);
@@ -206,17 +212,17 @@ try {
   for (const [width, expected] of [[320, 3], [390, 3], [768, 4], [1024, 4], [1920, 5]]) {
     assert.equal((await render(width, 900, "view=gallery")).columns, expected, `${width}px gallery columns`);
   }
-  for (const [width, height] of [[360,560],[360,640],[390,844],[412,915]]) {
+  for (const [width, height] of [[320,568],[360,560],[360,640],[375,667],[390,844],[412,915]]) {
     const portrait = await render(width, height, "view=draw");
-    const heightLimit = Math.max(180, Math.min(height - 447, height * .54));
-    const expectedWidth = Math.min(portrait.drawContentWidth, heightLimit, 720);
-    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} portrait canvas follows the viewport-height limit`);
-    assert.ok(portrait.canvas[0] <= portrait.drawContentWidth + 1, `${width}x${height} uses the smaller width/height constraint`);
+    const expectedWidth = Math.min(portrait.stageRect.width, portrait.stageRect.height, 720);
+    assert.ok(Math.abs(portrait.canvas[0] - expectedWidth) <= 1, `${width}x${height} portrait canvas fills the available stage`);
     assert.deepEqual(portrait.canvasResolution, [720, 720]);
     portraitObservations.push({ viewport: `${width}x${height}`, canvas: portrait.canvas[0], scrollHeight: portrait.documentHeight, clientHeight: portrait.documentClientHeight });
-    if (!portrait.saveVisible) assert.equal(portrait.documentScroll, true, `${width}x${height} portrait controls must remain reachable by document scroll`);
+    assert.equal(portrait.documentScroll, false);
+    assert.equal(portrait.saveVisible, true);
   }
-  assert.ok(portraitObservations[0].canvas < portraitObservations[1].canvas, `shorter portrait viewport must reduce the canvas: ${JSON.stringify(portraitObservations)}`);
+  assert.ok(portraitObservations.find(item => item.viewport === "390x844").canvas >= 373, `390x844 canvas must use the widened draw content: ${JSON.stringify(portraitObservations)}`);
+  assert.ok(portraitObservations.find(item => item.viewport === "412x915").canvas >= 395, `412x915 canvas must use the widened draw content: ${JSON.stringify(portraitObservations)}`);
   for (const [width, height] of [[768,1024],[820,1180],[1024,1366]]) {
     const portrait = await render(width, height, "view=draw");
     const expectedWidth = Math.min(portrait.drawContentWidth, 720);
@@ -224,11 +230,13 @@ try {
   }
   const longWord = await render(360, 640, "view=draw&long=1");
   assert.equal(longWord.horizontalOverflow, false, "long word must not overflow horizontally");
-  if (!longWord.saveVisible) assert.equal(longWord.documentScroll, true, "long word must fall back to document scrolling");
+  assert.equal(longWord.documentScroll, false, "long word must keep the mobile document non-scrolling");
+  assert.equal(longWord.saveVisible, true, "long word must keep save visible");
   assert.equal((await render(1024, 768, "view=detail")).columns, 2, "wide gallery detail must use two columns");
-  const customWord = await render(390, 844, "view=draw&custom=1");
+  const customWord = await render(360, 560, "view=draw&custom=1");
   assert.equal(customWord.horizontalOverflow, false, "custom word form must not overflow horizontally");
-  assert.equal(customWord.documentScroll, true, "custom word form must enable document scrolling");
+  assert.equal(customWord.documentScroll, false, "custom word form must keep document scrolling disabled");
+  assert.ok(customWord.drawScrollHeight > customWord.drawClientHeight, "custom word form must overflow inside the draw screen");
   const modal = (await render(568, 320, "view=draw&modal=1")).modal;
   assert.ok(modal.clientHeight < modal.scrollHeight, "short-screen modal must scroll internally");
 
@@ -287,8 +295,21 @@ try {
   await delay(100);
   await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   const outsideScroll = await command("Runtime.evaluate", { expression: `({ scrollY, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
-  assert.ok(outsideScroll.result.value.scrollY > 0, "touches starting outside the canvas must retain normal page scrolling");
+  assert.equal(outsideScroll.result.value.scrollY, 0, "the non-scrolling drawing layout must keep the document fixed without a canvas lock");
   assert.equal(outsideScroll.result.value.locked, false);
+
+  await render(360, 560, "view=draw&custom=1");
+  const customTouch = await command("Runtime.evaluate", {
+    expression: `(() => { const rect = document.querySelector(".custom-word-form").getBoundingClientRect(); return { x: rect.left + 8, y: Math.min(innerHeight - 20, rect.bottom - 8) }; })()`,
+    returnByValue: true
+  });
+  await command("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: customTouch.result.value.x, y: customTouch.result.value.y, id: 3, radiusX: 2, radiusY: 2, force: 1 }] });
+  await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: customTouch.result.value.x, y: customTouch.result.value.y - 180, id: 3, radiusX: 2, radiusY: 2, force: 1 }] });
+  await delay(100);
+  await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  const customOutsideScroll = await command("Runtime.evaluate", { expression: `({ scrollTop: document.querySelector(".draw-screen").scrollTop, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });
+  assert.ok(customOutsideScroll.result.value.scrollTop > 0, "touches outside the canvas must scroll the custom-word internal region");
+  assert.equal(customOutsideScroll.result.value.locked, false, "touches outside the canvas must not apply the strong canvas lock");
 } finally {
   shuttingDown = true;
   if (socket && socket.readyState < WebSocket.CLOSING) socket.close();

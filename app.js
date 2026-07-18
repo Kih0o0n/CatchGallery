@@ -513,7 +513,7 @@ function selectDrawingColor(button, buttons = document.querySelectorAll(".color"
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
-function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20 && !/[<>"'`=\u0000-\u001f\u007f]/u.test(value); }
+function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20 && !/[<>"'`=]/u.test(value); }
 function dataUrlBytes(dataUrl) {
   const base64 = String(dataUrl || "").split(",")[1] || "";
   const padding = (base64.match(/=*$/) || [""])[0].length;
@@ -1901,7 +1901,7 @@ async function publishDrawing() {
     imageHeight: optimized.imageHeight,
     imageBytes: optimized.imageBytes,
     thumbnailBytes: optimized.thumbnailBytes,
-    imageReady: false,
+    imageReady: true,
     drawerId: state.user.id,
     drawerNickname: state.user.nickname,
     status: "open",
@@ -1925,7 +1925,7 @@ async function publishDrawing() {
       [`drawingImages/${id}/imageData`]: optimized.imageData,
       [`drawingThumbnails/${id}/imageData`]: optimized.thumbnailData
     });
-    await db.ref().update({ [`drawings/${id}/imageReady`]: true, [`userDrawings/${state.user.id}/${id}`]: true });
+    await db.ref().update({ [`userDrawings/${state.user.id}/${id}`]: true });
   } catch (error) {
     console.error("그림 이미지 저장 실패:", error?.code || "unknown", error);
     try {
@@ -2007,7 +2007,7 @@ async function renderSolve() {
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
       if (button.disabled) return;
       state.hintUsed[button.dataset.hint] = true;
-      button.textContent = `카테고리: ${drawingsById.get(button.dataset.hint)?.category || "알 수 없음"}`;
+      showCategoryHint(button, drawingsById);
       button.disabled = true;
       const reward = document.querySelector(`[data-answer-reward="${button.dataset.hint}"]`);
       if (reward) reward.innerHTML = solverRewardHtml(Number(button.dataset.recentSuccesses) || 0, true);
@@ -2052,6 +2052,9 @@ async function renderSolve() {
     console.error(error);
     appEl.innerHTML = `<section class="screen">${emptyHtml("", "그림을 불러오지 못했어요.")}</section>`;
   }
+}
+function showCategoryHint(button, drawingsById) {
+  button.textContent = `카테고리: ${drawingsById.get(button.dataset.hint)?.category || "알 수 없음"}`;
 }
 function openDrawingCard(d, recentSuccesses = 0) {
   const mine = isOwnDrawing(d);

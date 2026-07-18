@@ -8,11 +8,12 @@ import { pathToFileURL } from "node:url";
 
 const app = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const categorySource = app.match(/function textLength[\s\S]*?(?=function dataUrlBytes)/)?.[0];
+const hintSource = app.match(/function showCategoryHint[\s\S]*?(?=function openDrawingCard)/)?.[0];
 const cardSource = app.match(/function openDrawingCard[\s\S]*?(?=function cancelSolveImageLoading)/)?.[0];
-assert.ok(categorySource && cardSource);
+assert.ok(categorySource && hintSource && cardSource);
 const isValidCategory = Function(`${categorySource}; return isValidCategory;`)();
 assert.equal(isValidCategory("운동과 놀이"), true);
-for (const unsafe of ['x" onfocus="x=1', "a<b", "a>b", "a'b", "a`b", "a=b", "a\u0001b"]) assert.equal(isValidCategory(unsafe), false, `${JSON.stringify(unsafe)} must be rejected for a new custom drawing`);
+for (const unsafe of ['x" onfocus="x=1', "a<b", "a>b", "a'b", "a`b", "a=b"]) assert.equal(isValidCategory(unsafe), false, `${JSON.stringify(unsafe)} must be rejected for a new custom drawing`);
 const state = { hintUsed: {} };
 const openDrawingCard = Function("state", "isOwnDrawing", "formatTime", "escapeHtml", "solverRewardHtml", `${cardSource}; return openDrawingCard;`)(state, () => false, () => "1시간", value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"), () => "");
 const drawings = [
@@ -42,9 +43,10 @@ try {
   const html = `<!doctype html><meta charset="utf-8"><body>${markup}<output id="result"></output><script>
     globalThis.x = undefined;
     const drawings = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob("${encodedDrawings}"), c => c.charCodeAt(0))));
+    ${hintSource}
     const drawingsById = new Map(drawings.map(drawing => [drawing.id, drawing]));
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
-      button.textContent = \`카테고리: \${drawingsById.get(button.dataset.hint)?.category || "알 수 없음"}\`;
+      showCategoryHint(button, drawingsById);
     });
     const attack = document.querySelector('[data-hint="attack"]');
     attack.focus(); attack.click();

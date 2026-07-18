@@ -139,7 +139,7 @@ assert.match(styles, /\.modal\s*\{[^}]*max-height:[^}]*overflow:\s*auto/);
 assert.match(styles, /env\(safe-area-inset-left\)|env\(safe-area-inset-right\)/);
 assert.doesNotMatch(styles, /\.draw-screen \.canvas-wrap[^}]*dvh/);
 assert.match(styles, /\.draw-screen \.canvas-wrap\s*\{[^}]*width:\s*100%[^}]*max-width:\s*720px/);
-assert.match(styles, /#drawingCanvas\s*\{[^}]*transform-origin:\s*0 0/);
+assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transform-origin/);
 assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transition/);
 assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas\s*\{[^}]*touch-action:\s*none/);
 assert.match(fixture, /<header class="app-header">\s*<button class="home-button"[\s\S]*<button class="brand-button"[\s\S]*<div class="score-chip"/);

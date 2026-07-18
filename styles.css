@@ -242,7 +242,7 @@ body.canvas-touch-session-lock {
   -webkit-touch-callout: none !important;
 }
 
-#drawingCanvas { cursor: crosshair; transform-origin: 0 0; }
+#drawingCanvas { cursor: crosshair; }
 
 .draw-screen {
   display: grid;

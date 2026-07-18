@@ -36,7 +36,7 @@ const window = {
   scrollTo(x, y) { scrollCalls.push([x, y]); this.scrollX = x; this.scrollY = y; }
 };
 const canvas = { contains: target => target?.insideCanvas === true };
-const state = { route: "draw", canvas, history: [], canvasTouchIdentifiers: new Set(), activePointerId: null, canvasGestureActive: false, canvasGesturePointers: new Map(), canvasGestureSuppressedPointers: new Set() };
+const state = { route: "draw", canvas, history: [], canvasTouchIdentifiers: new Set(), canvasIgnoredTouchPointers: new Set(), activePointerId: null };
 const code = [
   'const CANVAS_TOUCH_LOCK_CLASS = "canvas-touch-session-lock";',
   pick("preventIfCancelable"), pick("setCanvasTouchDocumentLock"), pick("cancelCanvasTouchFallbackCleanup"),
@@ -128,6 +128,9 @@ window.scrollX = 0; window.scrollY = 900;
 assert.equal(api.lockCanvasTouchSession(), true);
 window.scrollY = 0;
 assert.equal(state.canvasTouchIdentifiers.size, 0, "early pointer lock may exist before touchstart identifiers arrive");
+state.canvasIgnoredTouchPointers.add(99);
+assert.equal(api.scheduleCanvasTouchFallbackCleanup(), false, "ignored touch pointers keep pointer-only fallback from unlocking early");
+state.canvasIgnoredTouchPointers.clear();
 assert.equal(api.scheduleCanvasTouchFallbackCleanup(), true, "pointer-only sessions still schedule fallback cleanup");
 const fallback = [...timers.values()][0];
 fallback();
@@ -149,7 +152,7 @@ assert.match(setupSource, /visibilityState === "hidden"/);
 assert.match(setupSource, /scheduleCanvasTouchFallbackCleanup/);
 const startSource = setupSource.match(/const start = event => \{[\s\S]*?\r?\n  \};\r?\n  const move/)?.[0] || "";
 assert.ok(startSource, "setupCanvas pointerdown handler must be extractable");
-assert.ok(startSource.indexOf("lockCanvasTouchSession()") < startSource.indexOf("viewportPoint(event)"), "pointerdown must lock before viewport or canvas coordinate reads");
+assert.ok(startSource.indexOf("lockCanvasTouchSession()") < startSource.indexOf("canvas.getBoundingClientRect()"), "pointerdown must lock before canvas bounds and coordinate reads");
 assert.match(source.match(/function releaseCanvasHistory[\s\S]*?(?=function initializeCanvasHistory)/)?.[0] || "", /clearCanvasTouchSession/);
 assert.match(source.match(/function cleanupScreenResources[\s\S]*?(?=function transitionRoute)/)?.[0] || "", /releaseCanvasHistory/);
 

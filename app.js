@@ -239,7 +239,8 @@ const WORDS = Object.entries({
 
 const STATUS_LABEL = { open: "도전 중", solved: "완성", expired: "미해결", withdrawn: "회수됨" };
 const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", "인기순"], ["likes", "좋아요순"], ["dislikes", "싫어요순"]];
-const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
+const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, detailChars: 2500000, thumbnailChars: 400000, imageBytes: 1850000, thumbnailBytes: 290000, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
+const IMAGE_TOO_LARGE_MESSAGE = "그림 데이터가 너무 커서 저장할 수 없어요. 그림을 조금 단순하게 만든 뒤 다시 시도해 주세요.";
 const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200, feedbackBodies: 40 };
 const FEEDBACK_CACHE_TTL_MS = 30_000;
 const FEEDBACK_BODY_CONCURRENCY = 3;
@@ -512,11 +513,26 @@ function selectDrawingColor(button, buttons = document.querySelectorAll(".color"
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
-function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20; }
+function isValidCategory(value) { return typeof value === "string" && textLength(value) >= 1 && textLength(value) <= 20 && !/[<>"'`=\u0000-\u001f\u007f]/u.test(value); }
 function dataUrlBytes(dataUrl) {
   const base64 = String(dataUrl || "").split(",")[1] || "";
   const padding = (base64.match(/=*$/) || [""])[0].length;
   return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
+}
+function validateOptimizedImages(optimized) {
+  const imageData = String(optimized?.imageData || "");
+  const thumbnailData = String(optimized?.thumbnailData || "");
+  const imageBytes = dataUrlBytes(imageData);
+  const thumbnailBytes = dataUrlBytes(thumbnailData);
+  const validFormat = value => /^data:image\/(png|webp);base64,/.test(value);
+  if (!validFormat(imageData) || !validFormat(thumbnailData)
+    || imageData.length > IMAGE_OPTIONS.detailChars || thumbnailData.length > IMAGE_OPTIONS.thumbnailChars
+    || imageBytes > IMAGE_OPTIONS.imageBytes || thumbnailBytes > IMAGE_OPTIONS.thumbnailBytes) {
+    const error = new Error(IMAGE_TOO_LARGE_MESSAGE);
+    error.code = "image/too-large";
+    throw error;
+  }
+  return { ...optimized, imageBytes, thumbnailBytes };
 }
 function scaledCanvas(source, maxSize) {
   const ratio = Math.min(1, maxSize / Math.max(source.width, source.height));
@@ -539,7 +555,7 @@ async function optimizeCanvasImages(source) {
   const detail = webp && dataUrlBytes(webp) < dataUrlBytes(png) ? webp : png;
   const thumbnailCanvas = scaledCanvas(source, IMAGE_OPTIONS.thumbnailMax);
   const thumbnail = webpDataUrl(thumbnailCanvas) || thumbnailCanvas.toDataURL("image/png");
-  return {
+  return validateOptimizedImages({
     imageData: detail,
     thumbnailData: thumbnail,
     imageFormat: detail.startsWith("data:image/webp") ? "webp" : "png",
@@ -547,7 +563,7 @@ async function optimizeCanvasImages(source) {
     imageHeight: detailCanvas.height,
     imageBytes: dataUrlBytes(detail),
     thumbnailBytes: dataUrlBytes(thumbnail)
-  };
+  });
 }
 function loadDataUrlImage(dataUrl) {
   return new Promise((resolve, reject) => {
@@ -567,7 +583,7 @@ async function optimizeDataUrl(dataUrl) {
     optimized.imageHeight = image.height;
     optimized.imageBytes = dataUrlBytes(dataUrl);
   }
-  return optimized;
+  return validateOptimizedImages(optimized);
 }
 async function loadDrawingImage(drawing, kind = "detail") {
   const cache = kind === "thumbnail" ? state.thumbnailCache : state.detailImageCache;
@@ -1111,7 +1127,7 @@ function renderDraw() {
       const category = customCategory.value.trim();
       const word = customWord.value.trim();
       const rawAnswers = customAnswers.value.split(",").map(value => value.trim()).filter(Boolean);
-      if (!isValidCategory(category)) return showToast("카테고리는 1~20자로 입력해 주세요.");
+      if (!isValidCategory(category)) return showToast("카테고리는 1~20자로 입력하고 특수문자 없이 작성해 주세요.");
       if (textLength(word) < 1 || textLength(word) > 12) return showToast("제시어는 1~12자로 입력해 주세요.");
       if (rawAnswers.length > 5) return showToast("허용 정답은 최대 5개까지 입력할 수 있어요.");
       if (rawAnswers.some(value => textLength(value) < 1 || textLength(value) > 12)) return showToast("허용 정답은 각각 1~12자로 입력해 주세요.");
@@ -1873,7 +1889,7 @@ async function publishDrawing() {
   const now = serverNow();
   const ref = db.ref("drawings").push();
   const id = ref.key;
-  const optimized = await optimizeCanvasImages(state.canvas);
+  const optimized = validateOptimizedImages(await optimizeCanvasImages(state.canvas));
   const data = {
     word: state.word.word,
     category: state.word.category,
@@ -1987,10 +2003,11 @@ async function renderSolve() {
     if (!isScreenRequestCurrent(request)) return;
     appEl.innerHTML = `<section class="screen"><div class="section-head"><div><h2>정답 맞히기</h2><p class="muted">그림 속 제시어를 찾아보세요!</p></div></div><div class="filters"><select id="solveSort"><option value="new" ${sort === "new" ? "selected" : ""}>최신순</option><option value="old" ${sort === "old" ? "selected" : ""}>과거순</option></select></div><div id="openList">${list.length ? list.map(d => openDrawingCard(d, recentSuccesses)).join("") : emptyHtml("", "아직 도전할 그림이 없어요.")}</div></section>`;
     solveSort.onchange = () => { sessionStorage.setItem("solveSort", solveSort.value); renderSolve(); };
+    const drawingsById = new Map(list.map(drawing => [drawing.id, drawing]));
     document.querySelectorAll("[data-hint]").forEach(button => button.onclick = () => {
       if (button.disabled) return;
       state.hintUsed[button.dataset.hint] = true;
-      button.textContent = `카테고리: ${button.dataset.category}`;
+      button.textContent = `카테고리: ${drawingsById.get(button.dataset.hint)?.category || "알 수 없음"}`;
       button.disabled = true;
       const reward = document.querySelector(`[data-answer-reward="${button.dataset.hint}"]`);
       if (reward) reward.innerHTML = solverRewardHtml(Number(button.dataset.recentSuccesses) || 0, true);
@@ -2039,7 +2056,7 @@ async function renderSolve() {
 function openDrawingCard(d, recentSuccesses = 0) {
   const mine = isOwnDrawing(d);
   const usedHint = !!state.hintUsed[d.id];
-  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-category="${escapeHtml(d.category)}" data-recent-successes="${recentSuccesses}" ${usedHint ? "disabled" : ""}>${usedHint ? `카테고리: ${escapeHtml(d.category)}` : "카테고리 힌트 보기 (-4점)"}</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, usedHint)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
+  return `<article class="card drawing-card" data-solve-card="${d.id}"><div class="solve-image-slot" data-solve-slot="${d.id}"><img data-solve-image="${d.id}" alt="도전 중인 그림"><span class="image-loading">불러오는 중…</span></div><div class="meta"><span class="badge open">남은 시간: ${formatTime(d.expiresAt)}</span></div>${mine ? '<div class="notice">내 그림은 맞힐 수 없습니다.</div>' : `<button class="button secondary full" data-hint="${d.id}" data-recent-successes="${recentSuccesses}" ${usedHint ? "disabled" : ""}>${usedHint ? `카테고리: ${escapeHtml(d.category)}` : "카테고리 힌트 보기 (-4점)"}</button><div class="answer-reward" data-answer-reward="${d.id}">${solverRewardHtml(recentSuccesses, usedHint)}</div><form class="answer-row" data-answer-form="${d.id}"><input maxlength="30" autocomplete="off" placeholder="정답을 입력해요" aria-label="정답"><button class="button primary">정답!</button></form>`}</article>`;
 }
 function cancelSolveImageLoading() {
   state.solveObserver?.disconnect();
@@ -2150,7 +2167,7 @@ function observeSolveImages(list, request) {
   return loader;
 }
 async function updateDrawing(drawingId) {
-  const optimized = await optimizeCanvasImages(state.canvas);
+  const optimized = validateOptimizedImages(await optimizeCanvasImages(state.canvas));
   const now = serverNow();
   const ref = db.ref(`drawings/${drawingId}`);
   const fallbackDrawing = (await ref.once("value")).val();

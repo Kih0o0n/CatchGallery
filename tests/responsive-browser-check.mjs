@@ -232,7 +232,7 @@ try {
     expression: `(() => {
       window.scrollTo(0, 100);
       const canvas = document.querySelector("#drawingCanvas");
-      const state = { route: "draw", canvas, canvasTouchIdentifiers: new Set(), activePointerId: null, canvasGestureActive: false, canvasGesturePointers: new Map(), canvasGestureSuppressedPointers: new Set() };
+      const state = { route: "draw", canvas, canvasTouchIdentifiers: new Set(), canvasIgnoredTouchPointers: new Set(), activePointerId: null };
       ${touchLockSource}
       bindDocumentDrawingScrollBlocker();
       const eventOrder = [];
@@ -259,10 +259,20 @@ try {
   assert.equal(lockedState.result.value.eventOrder[0].savedScrollY, lockedState.result.value.eventOrder[1].savedScrollY, "touchstart cannot overwrite pointerdown scroll state");
   assert.equal(lockedState.result.value.savedScrollY, touch.scrollY, "locking must retain the original scroll position for restoration");
   assert.ok(Math.abs(lockedState.result.value.canvasTop - touch.canvasTop) <= 1, "locking must preserve the visible canvas position");
-  await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: touch.x, y: touch.y - 120, id: 1, radiusX: 2, radiusY: 2, force: 1 }] });
+  await command("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [
+    { x: touch.x, y: touch.y, id: 1, radiusX: 2, radiusY: 2, force: 1 },
+    { x: touch.x + 50, y: touch.y, id: 2, radiusX: 2, radiusY: 2, force: 1 }
+  ] });
+  await command("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [
+    { x: touch.x, y: touch.y - 120, id: 1, radiusX: 2, radiusY: 2, force: 1 },
+    { x: touch.x + 50, y: touch.y - 120, id: 2, radiusX: 2, radiusY: 2, force: 1 }
+  ] });
   await delay(50);
-  const duringDrag = await command("Runtime.evaluate", { expression: "scrollY", returnByValue: true });
-  assert.equal(duringDrag.result.value, lockedState.result.value.scrollY, "vertical canvas drag must not move the locked document");
+  const duringDrag = await command("Runtime.evaluate", { expression: `(() => { const canvas = document.querySelector("#drawingCanvas"); return { scrollY, locked: document.body.classList.contains("canvas-touch-session-lock"), inline: canvas.style.transform, computed: getComputedStyle(canvas).transform }; })()`, returnByValue: true });
+  assert.equal(duringDrag.result.value.scrollY, lockedState.result.value.scrollY, "two-finger canvas drag must not move the locked document");
+  assert.equal(duringDrag.result.value.locked, true, "strong touch lock remains active during two-finger input");
+  assert.equal(duringDrag.result.value.inline, "", "two-finger input cannot create an inline canvas transform");
+  assert.equal(duringDrag.result.value.computed, "none");
   await command("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await delay(50);
   const afterCanvasDrag = await command("Runtime.evaluate", { expression: `({ scrollY, locked: document.body.classList.contains("canvas-touch-session-lock") })`, returnByValue: true });

@@ -1613,7 +1613,10 @@ function setupCanvas(imageData) {
     const recentPenPalm = state.activePointerType === "pen" && event.pointerType === "touch" &&
       now !== null && state.activePointerLastEventAt !== null && now >= state.activePointerLastEventAt &&
       now - state.activePointerLastEventAt < PEN_TOUCH_TAKEOVER_DELAY_MS;
-    if (recentPenPalm) return;
+    if (recentPenPalm) {
+      preventIfCancelable(event);
+      return;
+    }
     if (event.pointerType === "touch") {
       preventIfCancelable(event);
       if (event.isPrimary !== false && ownsCanvas() && eventTargetsCanvas(event, canvas) &&

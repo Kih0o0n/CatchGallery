@@ -565,9 +565,12 @@ for (const endTarget of ["canvas", "window"]) {
   h.canvas.emit("pointerdown", { pointerId: 10, pointerType: "pen", timeStamp: 100, clientX: 10, clientY: 20 });
   h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 200, clientX: 30, clientY: 40 });
   const activeStroke = h.state.activeStroke;
+  const dirtyBeforePalm = h.state.dirty;
   const beginPaths = h.context.calls.filter(call => call[0] === "beginPath").length;
-  h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
-  h.canvas.emit("pointerdown", { pointerId: 12, pointerType: "touch", isPrimary: false, timeStamp: 320, clientX: 240, clientY: 250 });
+  const primaryPalm = h.canvas.emit("pointerdown", { pointerId: 11, pointerType: "touch", timeStamp: 300, clientX: 200, clientY: 210 });
+  const secondaryPalm = h.canvas.emit("pointerdown", { pointerId: 12, pointerType: "touch", isPrimary: false, timeStamp: 320, clientX: 240, clientY: 250 });
+  assert.equal(primaryPalm.prevented, true, "recent pen palm input must block the browser's default gesture");
+  assert.equal(secondaryPalm.prevented, true, "non-primary palm input must also block the browser's default gesture");
   assert.equal(h.counts().touchSessionLocks, 0, "touches ignored as recent pen palm input cannot start the document lock");
   h.canvas.emit("pointermove", { pointerId: 11, pointerType: "touch", timeStamp: 350, clientX: 220, clientY: 230 });
   h.canvas.emit("pointerup", { pointerId: 11, pointerType: "touch", timeStamp: 400 });
@@ -575,12 +578,15 @@ for (const endTarget of ["canvas", "window"]) {
   assert.equal(h.state.activePointerId, 10);
   assert.equal(h.state.activePointerType, "pen");
   assert.equal(h.state.canvasGestureActive, false, "touches cannot start a pinch while pen owns drawing");
+  assert.equal(h.state.canvasGesturePointers.size, 0);
   assert.equal(h.state.activeStroke, activeStroke);
   assert.equal(h.state.history.length, 0);
+  assert.equal(h.state.dirty, dirtyBeforePalm, "ignored palm input cannot change the pen stroke's dirty state");
   assert.equal(h.context.calls.filter(call => call[0] === "beginPath").length, beginPaths);
   h.canvas.emit("pointermove", { pointerId: 10, pointerType: "pen", timeStamp: 500, clientX: 50, clientY: 60 });
   h.canvas.emit("pointerup", { pointerId: 10, pointerType: "pen", timeStamp: 550 });
   assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.activePointerId, null, "the pen still completes and cleans up normally after ignored palm input");
   assert.deepEqual(h.state.history[0].points, [{ x: 0, y: 0 }, { x: 40, y: 40 }, { x: 80, y: 80 }]);
 }
 

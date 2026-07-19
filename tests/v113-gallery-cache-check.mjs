@@ -95,7 +95,8 @@ function submitHarness({ drawing, answer = "정답", transactionMode = "normal",
 
 const openDrawing = {
   status: "open", drawerId: "drawer", drawerNickname: "그린이", solverId: null,
-  word: "정답", answers: ["정답", "허용 정답"], expiresAt: 3_000, revisionCount: 0, likeCount: 0
+  word: "정답", answers: ["정답", "허용 정답"], expiresAt: 3_000, revisionCount: 0, likeCount: 0,
+  imageReady: true
 };
 
 {
@@ -176,7 +177,7 @@ for (const scenario of [
 async function runExpiration({ expired }) {
   const state = cacheState();
   const invalidations = [];
-  const drawing = { status: "open", solverId: null, expiresAt: expired ? 1_000 : 3_000 };
+  const drawing = { status: "open", solverId: null, expiresAt: expired ? 1_000 : 3_000, imageReady: true };
   const child = {
     key: "drawing",
     val: () => drawing,
@@ -191,7 +192,7 @@ async function runExpiration({ expired }) {
   const query = { equalTo: () => query, once: async () => snapshot };
   const db = { ref: () => ({ orderByChild: () => query }) };
   const invalidateGalleryListsByStatus = status => { invalidations.push(status); invalidator(state)(status); };
-  const expireOldDrawings = Function("state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "console", `"use strict"; ${expireSource}; return expireOldDrawings;`)(state, db, () => 2_000, invalidateGalleryListsByStatus, 60_000, { warn() {} });
+  const expireOldDrawings = Function("state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "console", `"use strict"; ${expireSource}; return expireOldDrawings;`)(state, db, () => 2_000, invalidateGalleryListsByStatus, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), { warn() {} });
   await expireOldDrawings({ force: true });
   return { state, invalidations };
 }

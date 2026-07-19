@@ -49,9 +49,9 @@ function expiryHarness() {
   const query = { equalTo: value => { assert.equal(value, "open"); return query; }, once: () => { reads++; return nextRead; } };
   const db = { ref: path => { assert.equal(path, "drawings"); return { orderByChild: key => { assert.equal(key, "status"); return query; } }; } };
   const api = Function(
-    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "console",
+    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "console",
     `"use strict"; ${pick("expireOldDrawings")}; ${pick("loadOpenDrawings")}; return { expireOldDrawings, loadOpenDrawings };`
-  )(state, db, () => now, () => { invalidations++; }, 60_000, { warn: (...args) => warnings.push(args) });
+  )(state, db, () => now, () => { invalidations++; }, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), { warn: (...args) => warnings.push(args) });
   return {
     state, warnings, ...api,
     setNow: value => { now = value; },
@@ -93,7 +93,7 @@ function expiryHarness() {
 }
 
 function transactionSnapshot(outcomes) {
-  const records = Object.fromEntries(Object.keys(outcomes).map((key, index) => [key, { status: "open", solverId: null, expiresAt: 1_000 + index }]));
+  const records = Object.fromEntries(Object.keys(outcomes).map((key, index) => [key, { status: "open", solverId: null, expiresAt: 1_000 + index, imageReady: true }]));
   return makeSnapshot(records, async (key, value, update) => {
     const outcome = outcomes[key];
     if (outcome === "reject") throw new Error(`transaction failed: ${key}`);
@@ -149,7 +149,7 @@ function solveHarness(sort) {
   const now = 5_000;
   const records = {
     newer: { status: "open", createdAt: 4, expiresAt: 8_000, imageReady: true },
-    older: { status: "open", createdAt: 2, expiresAt: 9_000 },
+    older: { status: "open", createdAt: 2, expiresAt: 9_000, imageData: "legacy" },
     expired: { status: "open", createdAt: 3, expiresAt: 1_000 },
     incomplete: { status: "open", createdAt: 1, expiresAt: 9_000, imageReady: false }
   };
@@ -161,9 +161,9 @@ function solveHarness(sort) {
   const query = { equalTo: () => query, once: async () => { reads++; return snapshot; } };
   const db = { ref: () => ({ orderByChild: () => query }) };
   const api = Function(
-    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "console",
+    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "console",
     `"use strict"; ${pick("expireOldDrawings")}; ${pick("loadOpenDrawings")}; return { expireOldDrawings, loadOpenDrawings };`
-  )(state, db, () => now, () => {}, 60_000, { warn() {} });
+  )(state, db, () => now, () => {}, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), { warn() {} });
   return { api, get reads() { return reads; }, sort };
 }
 
@@ -232,7 +232,7 @@ function galleryHarness() {
     "state", "db", "performance", "isCacheSessionCurrent", "showToast", "console",
     `"use strict"; ${pick("toggleLike")}; return toggleLike;`
   )(state, db, { now: () => 0 }, () => true, () => {}, { info() {} });
-  await toggleLike("a", { id: "a", status: "solved", drawerId: "other" });
+  await toggleLike("a", { id: "a", status: "solved", drawerId: "other", imageReady: true });
   assert.deepEqual(state.galleryLists["solved:new"][0], { id: "a", likeCount: 2, isLiked: true });
   assert.deepEqual(state.galleryLists["solved:old"][0], { id: "a", likeCount: 2, isLiked: true });
   assert.deepEqual(state.galleryMetadata.solved[0], { id: "a", likeCount: 2, isLiked: true });
@@ -267,7 +267,7 @@ function galleryHarness() {
   const state = { user: { id: "owner" } };
   const snapshot = makeSnapshot({
     ready: { drawerId: "owner", createdAt: 3, imageReady: true },
-    legacy: { drawerId: "owner", createdAt: 2 },
+    legacy: { drawerId: "owner", createdAt: 2, imageData: "data:image/png;base64,legacy" },
     incomplete: { drawerId: "owner", createdAt: 4, imageReady: false },
     other: { drawerId: "other", createdAt: 5, imageReady: true }
   });

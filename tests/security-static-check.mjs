@@ -53,8 +53,8 @@ assert.match(app, /state\.seenWordKeys\.clear\(\)/, "word selection sessions mus
 assert.match(app, /WORDS\.filter\(entry => !state\.seenWordKeys\.has\(wordKey\(entry\)\)\)/, "word rerolls must select from unseen prompts");
 assert.match(app, /WORDS\.length > 1 && currentKey/, "a new cycle must avoid the immediately previous prompt");
 assert.match(app, /maxlength="20"[^>]+id="customCategory"|id="customCategory"[^>]+maxlength="20"/, "custom categories must allow 20 characters");
-assert.match(app, /카테고리는 1~20자로 입력해 주세요/, "custom category validation must match rules");
-assert.match(app, /function isValidCategory\(value\)[^\n]+<= 20/, "all drawing categories must share the 20-character app validation");
+assert.match(app, /카테고리는 1~20자로 입력하고 특수문자 없이 작성해 주세요/, "custom category validation must explain the safe input rule");
+assert.match(app, /function isValidCategory\(value\)[^\n]+<= 20[^\n]+\[<>\"'`=\]/, "new drawing categories must reject attribute-breaking characters");
 assert.match(app, /publishDrawing\(\)[\s\S]{0,100}isValidCategory\(state\.word\?\.category\)/, "publishing must validate default and custom categories alike");
 assert.match(app, /그림 저장 실패:[^\n]+console|console\.error\("그림 저장 실패:/, "drawing save failures must be logged");
 assert.match(rules.drawings.$id.category[".validate"], /length <= 20/, "drawing categories must allow up to 20 characters");

@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "test:rules": "firebase emulators:exec --project demo-catchgallery --only database \"node tests/database-rules-emulator-check.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.1",
+    "firebase": "12.16.0",
+    "firebase-tools": "15.24.0"
+  }
+}

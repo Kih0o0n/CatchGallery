@@ -245,6 +245,7 @@ const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200, feedbackBodies: 
 const FEEDBACK_CACHE_TTL_MS = 30_000;
 const FEEDBACK_BODY_CONCURRENCY = 3;
 const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
+const STALE_PROVISIONAL_GRACE_MS = 15 * 60 * 1000;
 const DRAWING_HISTORY_LIMIT = 15;
 const PEN_TOUCH_TAKEOVER_DELAY_MS = 1500;
 const DRAWING_COLORS = [
@@ -322,6 +323,8 @@ const state = {
   rankingSnapshotPromise: null,
   expirySweepPromise: null,
   expirySweepCompletedAt: 0,
+  provisionalCleanupPromise: null,
+  provisionalCleanupCompletedAt: 0,
   editDrawing: null,
   canvas: null,
   ctx: null,
@@ -424,6 +427,8 @@ function resetUserSessionCaches() {
   state.feedbackPending?.clear();
   state.expirySweepPromise = null;
   state.expirySweepCompletedAt = 0;
+  state.provisionalCleanupPromise = null;
+  state.provisionalCleanupCompletedAt = 0;
   state.rankingSnapshot = null;
   state.rankingSnapshotPromise = null;
 }
@@ -1942,6 +1947,53 @@ async function publishDrawing() {
   }
   return { id, imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
 }
+function hasCompleteImageMetadata(drawing) {
+  return ["imageVersion", "imageFormat", "imageWidth", "imageHeight", "imageBytes", "thumbnailBytes"].every(field => drawing?.[field] !== undefined && drawing?.[field] !== null);
+}
+function isStaleProvisionalDrawing(drawing, now = serverNow()) {
+  return !!drawing && drawing.status === "open" && !drawing.imageData && drawing.imageReady === false && !drawing.solverId && hasCompleteImageMetadata(drawing) && Number.isFinite(Number(drawing.createdAt)) && Number(drawing.createdAt) <= now - STALE_PROVISIONAL_GRACE_MS;
+}
+function cleanupStaleProvisionalDrawings({ snapshot = null, force = false, now = serverNow() } = {}) {
+  if (!db) return Promise.resolve({ snapshot: null, changed: false, skipped: true, failed: [] });
+  if (state.provisionalCleanupPromise) return state.provisionalCleanupPromise;
+  if (!force && state.provisionalCleanupCompletedAt && now - state.provisionalCleanupCompletedAt < EXPIRY_SWEEP_INTERVAL_MS) {
+    return Promise.resolve({ snapshot, changed: false, skipped: true, failed: [] });
+  }
+  const generation = state.cacheGeneration;
+  let cleanupPromise;
+  cleanupPromise = (async () => {
+    try {
+      const snap = snapshot || await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
+      const jobs = [];
+      snap.forEach(child => {
+        if (!isStaleProvisionalDrawing(child.val(), now)) return;
+        const cleanupAt = serverNow();
+        const paths = [`drawingImages/${child.key}`, `drawingThumbnails/${child.key}`, `drawings/${child.key}`];
+        jobs.push({ id: child.key, paths, promise: db.ref().update({
+          [`drawingImages/${child.key}`]: null,
+          [`drawingThumbnails/${child.key}`]: null,
+          [`drawings/${child.key}/status`]: "withdrawn",
+          [`drawings/${child.key}/withdrawnAt`]: cleanupAt,
+          [`drawings/${child.key}/updatedAt`]: cleanupAt
+        }) });
+      });
+      const settled = await Promise.allSettled(jobs.map(job => job.promise));
+      const failed = [];
+      settled.forEach((result, index) => {
+        if (result.status !== "rejected") return;
+        const job = jobs[index];
+        failed.push(job.id);
+        console.warn(`[provisional cleanup] ${job.id} 정리 실패 (${job.paths.join(", ")})`, result.reason);
+      });
+      if (state.cacheGeneration === generation) state.provisionalCleanupCompletedAt = now;
+      return { snapshot: snap, changed: settled.some(result => result.status === "fulfilled"), skipped: false, failed };
+    } finally {
+      if (state.provisionalCleanupPromise === cleanupPromise) state.provisionalCleanupPromise = null;
+    }
+  })();
+  state.provisionalCleanupPromise = cleanupPromise;
+  return cleanupPromise;
+}
 function expireOldDrawings({ force = false, now = serverNow() } = {}) {
   if (!db) return Promise.resolve({ snapshot: null, changed: false, skipped: true });
   if (state.expirySweepPromise) return state.expirySweepPromise;
@@ -1953,10 +2005,14 @@ function expireOldDrawings({ force = false, now = serverNow() } = {}) {
   sweepPromise = (async () => {
     try {
       const snap = await db.ref("drawings").orderByChild("status").equalTo("open").once("value");
+      const cleanupPromise = cleanupStaleProvisionalDrawings({ snapshot: snap, force, now }).catch(error => {
+        console.warn("중단된 provisional 그림 정리 sweep 실패:", error);
+        return { snapshot: snap, changed: false, skipped: false, failed: ["sweep"] };
+      });
       const jobs = [];
       snap.forEach(child => {
         const d = child.val();
-        if (!d.solverId && Number(d.expiresAt) <= now) {
+        if (!d.solverId && (d.imageData || d.imageReady === true) && Number(d.expiresAt) <= now) {
           const fallbackDrawing = d;
           jobs.push({ key: child.key, promise: child.ref.transaction(cur => {
             const current = cur || fallbackDrawing;
@@ -1970,6 +2026,7 @@ function expireOldDrawings({ force = false, now = serverNow() } = {}) {
         }
       });
       const settled = await Promise.allSettled(jobs.map(job => job.promise));
+      const provisionalCleanup = await cleanupPromise;
       let failedTransactions = 0;
       settled.forEach((result, index) => {
         if (result.status === "rejected") {
@@ -1980,7 +2037,7 @@ function expireOldDrawings({ force = false, now = serverNow() } = {}) {
       const changed = settled.some(result => result.status === "fulfilled" && result.value.committed && result.value.snapshot.val()?.status === "expired");
       if (changed && state.cacheGeneration === generation) invalidateGalleryListsByStatus("expired");
       if (!failedTransactions && state.cacheGeneration === generation) state.expirySweepCompletedAt = serverNow();
-      return { snapshot: snap, changed, skipped: false, failedTransactions };
+      return { snapshot: snap, changed, skipped: false, failedTransactions, provisionalCleanup };
     } finally {
       if (state.expirySweepPromise === sweepPromise) state.expirySweepPromise = null;
     }

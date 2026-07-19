@@ -33,6 +33,13 @@ const legacyDrawing = (overrides = {}) => {
   return drawing;
 };
 const drawingRef = (db, id) => ref(db, `drawings/${id}`);
+const staleCleanupUpdate = (id, timestamp = now) => ({
+  [`drawingImages/${id}`]: null,
+  [`drawingThumbnails/${id}`]: null,
+  [`drawings/${id}/status`]: "withdrawn",
+  [`drawings/${id}/withdrawnAt`]: timestamp,
+  [`drawings/${id}/updatedAt`]: timestamp
+});
 const seed = async (entries, extra = {}) => environment.withSecurityRulesDisabled(async context => {
   await set(ref(context.database()), {
     users: { owner: { nickname: "그린이" }, solver: { nickname: "맞힌이" }, admin: { nickname: "관리자" } },
@@ -95,6 +102,29 @@ try {
   await seed({ provisional: baseDrawing() });
   await assertSucceeds(update(drawingRef(adminDb, "provisional"), { status: "adminDeleted", adminDeletedAt: now, adminDeletedBy: "admin", updatedAt: now }));
 
+  const freshProvisional = baseDrawing({ createdAt: now - 600_000 });
+  await seed({ freshProvisional });
+  await assertFails(update(drawingRef(solverDb, "freshProvisional"), { status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+  const staleProvisional = baseDrawing({ createdAt: now - 900_001 });
+  await seed({ staleProvisional });
+  await assertSucceeds(update(drawingRef(solverDb, "staleProvisional"), { status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+  await seed({ staleProvisional }, { drawingImages: { staleProvisional: { imageData: "data:image/webp;base64,AAAA" } }, drawingThumbnails: { staleProvisional: { imageData: "data:image/webp;base64,AAAA" } } });
+  await assertSucceeds(update(ref(solverDb), staleCleanupUpdate("staleProvisional")));
+  for (const mutation of [{ word: "강아지" }, { category: "다른 분류" }, { answers: ["강아지"] }, { imageBytes: 99 }, { revisionCount: 1 }]) {
+    await seed({ staleProvisional });
+    await assertFails(update(drawingRef(solverDb, "staleProvisional"), { ...mutation, status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+  }
+  await seed({ staleProvisional }, { drawingImages: { staleProvisional: { imageData: "data:image/webp;base64,AAAA" } }, drawingThumbnails: { staleProvisional: { imageData: "data:image/webp;base64,AAAA" } } });
+  await assertFails(update(ref(solverDb), { ...staleCleanupUpdate("staleProvisional"), "drawings/staleProvisional/imageReady": true }));
+  for (const status of ["solved", "expired"]) {
+    await seed({ staleProvisional });
+    await assertFails(update(drawingRef(solverDb, "staleProvisional"), { status, [`${status}At`]: now, updatedAt: now }));
+  }
+  await seed({ staleComplete: completeDrawing({ createdAt: now - 900_001 }) });
+  await assertFails(update(drawingRef(solverDb, "staleComplete"), { status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+  await seed({ staleLegacy: legacyDrawing({ createdAt: now - 900_001 }) });
+  await assertFails(update(drawingRef(solverDb, "staleLegacy"), { status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+
   const unsafeIds = ['bad"id', "bad'id", "bad`id", "bad=id", "bad id", "x".repeat(81)];
   for (const [index, unsafeId] of unsafeIds.entries()) {
     await seed({});
@@ -104,12 +134,32 @@ try {
   const unsafeExistingId = 'bad"id';
   await seed({ [unsafeExistingId]: completeDrawing() });
   await assertSucceeds(update(drawingRef(ownerDb, unsafeExistingId), { status: "withdrawn", withdrawnAt: now, updatedAt: now }));
+  await seed({ [unsafeExistingId]: completeDrawing({ expiresAt: now - 1 }) });
+  await assertSucceeds(update(drawingRef(solverDb, unsafeExistingId), { status: "expired", expiredAt: now, updatedAt: now }));
   await seed({ [unsafeExistingId]: completeDrawing() });
   await assertSucceeds(update(drawingRef(adminDb, unsafeExistingId), { status: "adminDeleted", adminDeletedAt: now, adminDeletedBy: "admin", updatedAt: now }));
+  await seed({ [unsafeExistingId]: completeDrawing() });
+  await assertFails(update(drawingRef(ownerDb, unsafeExistingId), { updatedAt: now + 1 }));
+  await assertFails(update(drawingRef(ownerDb, unsafeExistingId), { revisionCount: 1, updatedAt: now + 1 }));
+  await assertFails(set(ref(ownerDb, `drawingImages/${unsafeExistingId}/imageData`), "data:image/webp;base64,AAAA"));
+  const unsafeProvisional = baseDrawing({ createdAt: now - 900_001 });
+  await seed({ [unsafeExistingId]: unsafeProvisional }, { drawingImages: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } }, drawingThumbnails: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } } });
+  await assertFails(update(drawingRef(ownerDb, unsafeExistingId), { imageReady: true, updatedAt: now }));
+  await assertSucceeds(update(ref(solverDb), staleCleanupUpdate(unsafeExistingId)));
+  await seed({ [unsafeExistingId]: completeDrawing() });
+  await assertFails(set(drawingRef(solverDb, unsafeExistingId), { ...completeDrawing(), status: "solved", solverId: "solver", solverNickname: "맞힌이", solvedAt: now, hintUsed: false, solverReward: 10, drawerReward: 30, updatedAt: now }));
   await seed({ [unsafeExistingId]: completeDrawing({ status: "solved", solverId: "solver", solvedAt: now }) });
   await assertFails(set(ref(solverDb, `drawingLikes/${unsafeExistingId}/solver`), true));
   await assertFails(set(ref(solverDb, `scoreClaims/solver/${unsafeExistingId}`), { score: 10, type: "solver", createdAt: now }));
   await assertFails(set(ref(ownerDb, `userDrawings/owner/${unsafeExistingId}`), true));
+  await assertFails(set(ref(solverDb, `userSolved/solver/${unsafeExistingId}`), true));
+  await seed({ [unsafeExistingId]: legacyDrawing() }, { drawingImages: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } }, drawingThumbnails: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } } });
+  await assertFails(update(drawingRef(adminDb, unsafeExistingId), { imageData: null, imageReady: true, imageVersion: 1, imageFormat: "webp", imageWidth: 720, imageHeight: 720, imageBytes: 1000, thumbnailBytes: 200 }));
+
+  await seed({ safeOpen: completeDrawing() });
+  await assertSucceeds(update(drawingRef(ownerDb, "safeOpen"), { updatedAt: now + 1 }));
+  await seed({ safeSolve: completeDrawing() });
+  await assertSucceeds(set(drawingRef(solverDb, "safeSolve"), { ...completeDrawing(), status: "solved", solverId: "solver", solverNickname: "맞힌이", solvedAt: now, hintUsed: false, solverReward: 10, drawerReward: 30, updatedAt: now }));
 
   const feedbackMeta = { createdAt: now, updatedAt: now, isAnonymous: false, isSecret: false, displayAuthor: "그린이", status: "open", hidden: false, deleted: false, likeCount: 0, dislikeCount: 0, popularityScore: 0 };
   await seed({});

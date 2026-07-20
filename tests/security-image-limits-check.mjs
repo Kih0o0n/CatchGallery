@@ -33,8 +33,28 @@ const publish = Function("isValidCategory", "state", "serverNow", "db", "validat
 await assert.rejects(publish(), /그림 데이터가 너무 커서/);
 assert.equal(writes, 0, "oversized images must be rejected before any Firebase write");
 
-assert.match(rules.drawingImages.$drawingId.imageData[".validate"], /length <= 2500000/);
-assert.match(rules.drawingThumbnails.$drawingId.imageData[".validate"], /length <= 400000/);
+assert.match(rules.drawingImages.$drawingId.imageData[".validate"], /length <= 2466691/);
+assert.match(rules.drawingThumbnails.$drawingId.imageData[".validate"], /length <= 386691/);
+for (const validation of [rules.drawingImages.$drawingId.imageData[".validate"], rules.drawingThumbnails.$drawingId.imageData[".validate"]]) {
+  assert.match(validation, /\^data:image\\\/\(png\|webp\);base64,/);
+  assert.match(validation, /\{2\}==/);
+  assert.match(validation, /\{3\}=/);
+  assert.match(validation, /\$\//, "Rules data URL validation must be anchored at the end");
+}
+const detailValidation = rules.drawingImages.$drawingId.imageData[".validate"];
+const rulePatternStart = detailValidation.lastIndexOf(".matches(/") + ".matches(/".length;
+const rulePatternEnd = detailValidation.indexOf("$/)", rulePatternStart);
+const rulePatternSource = detailValidation.slice(rulePatternStart, rulePatternEnd + 1);
+assert.ok(rulePatternStart >= ".matches(/".length && rulePatternEnd > rulePatternStart);
+const rulePattern = new RegExp(rulePatternSource);
+for (const accepted of ["data:image/png;base64,AAAA", "data:image/webp;base64,UklGRg==", "data:image/png;base64,iVBORw0KGgo="]) assert.match(accepted, rulePattern);
+for (const rejected of [
+  "data:image/jpeg;base64,AAAA", "data:image/png;base64,", "data:image/png;base64,AAAA suffix",
+  "data:image/png;base64,AA AA", "data:image/png;base64,AA\nAA", "data:image/png;base64,AAAA,",
+  "data:image/png;base64,한글", "data:image/png;base64,AAA*", "data:image/png;base64,AAAA===", "data:image/png;base64,A==="
+]) assert.doesNotMatch(rejected, rulePattern);
+assert.match(rules.drawings.$id[".validate"], /length <= 2466691[\s\S]*length <= 386691/);
+assert.equal((rules.drawings.$id[".validate"].match(/\^data:image\\\/\(png\|webp\);base64,/g) || []).length, 2);
 assert.match(rules.drawings.$id.imageBytes[".validate"], /<= 1850000/);
 assert.match(rules.drawings.$id.thumbnailBytes[".validate"], /<= 290000/);
 assert.match(rules.drawings.$id[".validate"], /!newData\.hasChild\('imageData'\)/);

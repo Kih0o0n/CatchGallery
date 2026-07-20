@@ -34,7 +34,7 @@ assert.equal(rules.drawingImages.$drawingId[".read"], "auth != null && root.chil
 assert.equal(rulesText.split("data:image\\\\/(png|webp);base64,").length - 1, 4, "image write and publish-transition Rules regexes must preserve the escaped slash for the Rules parser");
 for (const imageRules of [rules.drawingImages, rules.drawingThumbnails]) {
   const validation = imageRules.$drawingId.imageData[".validate"];
-  assert.match(validation, /newData\.isString\(\) && newData\.val\(\)\.length <= (2500000|400000)/);
+  assert.match(validation, /newData\.isString\(\) && newData\.val\(\)\.length <= (2466691|386691)/);
   const regexes = [...validation.matchAll(/matches\(\/\^([^/]*)\/\)/g)];
   assert.doesNotThrow(() => new RegExp(regexes.at(-1)[1]));
 }

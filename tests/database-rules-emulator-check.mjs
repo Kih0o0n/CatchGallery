@@ -243,12 +243,16 @@ try {
     ["editWithdrawn", completeDrawing({ status: "withdrawn", withdrawnAt: now })]
   ]) {
     await seed({ [id]: drawing }, { drawingImages: { [id]: { imageData: PNG_DATA_URL } }, drawingThumbnails: { [id]: { imageData: WEBP_DATA_URL } } });
-    const before = (await get(ref(ownerDb))).val();
+    const beforeDrawing = (await get(drawingRef(ownerDb, id))).val();
+    const beforeImage = (await get(ref(ownerDb, `drawingImages/${id}`))).val();
+    const beforeThumbnail = (await get(ref(ownerDb, `drawingThumbnails/${id}`))).val();
     await assertFails(update(ref(ownerDb), editUpdate(id, 1)));
-    const after = (await get(ref(ownerDb))).val();
-    assert.deepEqual(after.drawings[id], before.drawings[id]);
-    assert.deepEqual(after.drawingImages[id], before.drawingImages[id]);
-    assert.deepEqual(after.drawingThumbnails[id], before.drawingThumbnails[id]);
+    const afterDrawing = (await get(drawingRef(ownerDb, id))).val();
+    const afterImage = (await get(ref(ownerDb, `drawingImages/${id}`))).val();
+    const afterThumbnail = (await get(ref(ownerDb, `drawingThumbnails/${id}`))).val();
+    assert.deepEqual(afterDrawing, beforeDrawing);
+    assert.deepEqual(afterImage, beforeImage);
+    assert.deepEqual(afterThumbnail, beforeThumbnail);
   }
 
   await seed({ concurrentEdit: completeDrawing() }, { drawingImages: { concurrentEdit: { imageData: PNG_DATA_URL } }, drawingThumbnails: { concurrentEdit: { imageData: WEBP_DATA_URL } } });

@@ -35,10 +35,7 @@ const legacyDrawing = (overrides = {}) => {
 const drawingRef = (db, id) => ref(db, `drawings/${id}`);
 const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo=";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRg==";
-const validDataUrlAtMost = (mime, maximum) => {
-  const prefix = `data:image/${mime};base64,`;
-  return `${prefix}${"A".repeat(Math.floor((maximum - prefix.length) / 4) * 4)}`;
-};
+const dataUrlForBytes = (mime, bytes) => `data:image/${mime};base64,${Buffer.alloc(bytes).toString("base64")}`;
 const editUpdate = (id, revisionCount, suffix = "") => ({
   [`drawingImages/${id}/imageData`]: `data:image/png;base64,iVBORw0KGg${suffix || "o"}=`,
   [`drawingThumbnails/${id}/imageData`]: WEBP_DATA_URL,
@@ -90,13 +87,43 @@ try {
     await seed({ [`malformed-${index}`]: baseDrawing() });
     await assertFails(set(ref(ownerDb, `drawingImages/malformed-${index}/imageData`), value));
   }
-  const largestDetail = validDataUrlAtMost("png", 2_466_691);
-  const largestThumbnail = validDataUrlAtMost("webp", 386_691);
-  await seed({ lengthLimits: baseDrawing() });
-  await assertSucceeds(set(ref(ownerDb, "drawingImages/lengthLimits/imageData"), largestDetail));
-  await assertSucceeds(set(ref(ownerDb, "drawingThumbnails/lengthLimits/imageData"), largestThumbnail));
-  await assertFails(set(ref(ownerDb, "drawingImages/lengthLimits/imageData"), `${largestDetail}AAAA`));
-  await assertFails(set(ref(ownerDb, "drawingThumbnails/lengthLimits/imageData"), `${largestThumbnail}AAAA`));
+  for (const mime of ["png", "webp"]) {
+    const detailId = `detail-boundary-${mime}`;
+    const thumbnailId = `thumbnail-boundary-${mime}`;
+    const detailAtLimit = dataUrlForBytes(mime, 1_850_000);
+    const thumbnailAtLimit = dataUrlForBytes(mime, 290_000);
+    await seed({ [detailId]: baseDrawing() });
+    await assertSucceeds(set(ref(ownerDb, `drawingImages/${detailId}/imageData`), detailAtLimit));
+    await assertFails(set(ref(ownerDb, `drawingImages/${detailId}/imageData`), dataUrlForBytes(mime, 1_850_001)));
+    assert.equal((await get(ref(ownerDb, `drawingImages/${detailId}/imageData`))).val(), detailAtLimit);
+    await seed({ [thumbnailId]: baseDrawing() });
+    await assertSucceeds(set(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`), thumbnailAtLimit));
+    await assertFails(set(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`), dataUrlForBytes(mime, 290_001)));
+    assert.equal((await get(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`))).val(), thumbnailAtLimit);
+  }
+  const finalDetailAtLimit = dataUrlForBytes("png", 1_850_000);
+  const finalThumbnailAtLimit = dataUrlForBytes("webp", 290_000);
+  await seed({ boundaryFinalization: baseDrawing() }, {
+    drawingImages: { boundaryFinalization: { imageData: finalDetailAtLimit } },
+    drawingThumbnails: { boundaryFinalization: { imageData: finalThumbnailAtLimit } }
+  });
+  await assertSucceeds(update(ref(ownerDb), { "drawings/boundaryFinalization/imageReady": true, "userDrawings/owner/boundaryFinalization": true }));
+  for (const [id, detailBytes, thumbnailBytes] of [
+    ["detailBoundaryFailure", 1_850_001, 290_000],
+    ["thumbnailBoundaryFailure", 1_850_000, 290_001]
+  ]) {
+    const detailData = dataUrlForBytes("png", detailBytes);
+    const thumbnailData = dataUrlForBytes("webp", thumbnailBytes);
+    await seed({ [id]: baseDrawing() }, {
+      drawingImages: { [id]: { imageData: detailData } },
+      drawingThumbnails: { [id]: { imageData: thumbnailData } }
+    });
+    await assertFails(update(ref(ownerDb), { [`drawings/${id}/imageReady`]: true, [`userDrawings/owner/${id}`]: true }));
+    assert.equal((await get(drawingRef(ownerDb, id))).val().imageReady, false);
+    assert.equal((await get(ref(ownerDb, `userDrawings/owner/${id}`))).exists(), false);
+    assert.equal((await get(ref(ownerDb, `drawingImages/${id}/imageData`))).val(), detailData);
+    assert.equal((await get(ref(ownerDb, `drawingThumbnails/${id}/imageData`))).val(), thumbnailData);
+  }
   await seed({ detailOnly: baseDrawing() }, { drawingImages: { detailOnly: { imageData: "data:image/webp;base64,AAAA" } } });
   await assertFails(update(drawingRef(ownerDb, "detailOnly"), { imageReady: true }));
   await seed({ thumbOnly: baseDrawing() }, { drawingThumbnails: { thumbOnly: { imageData: "data:image/webp;base64,AAAA" } } });

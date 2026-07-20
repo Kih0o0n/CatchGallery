@@ -10,7 +10,8 @@ assert.ok(dataUrlBytesSource && validateSource);
 const IMAGE_OPTIONS = { detailChars: 2_500_000, thumbnailChars: 400_000, imageBytes: 1_850_000, thumbnailBytes: 290_000 };
 const IMAGE_TOO_LARGE_MESSAGE = "그림 데이터가 너무 커서 저장할 수 없어요. 그림을 조금 단순하게 만든 뒤 다시 시도해 주세요.";
 const validate = Function("IMAGE_OPTIONS", "IMAGE_TOO_LARGE_MESSAGE", `${dataUrlBytesSource}\n${validateSource}\nreturn validateOptimizedImages;`)(IMAGE_OPTIONS, IMAGE_TOO_LARGE_MESSAGE);
-const urlForBytes = bytes => `data:image/png;base64,${Buffer.alloc(bytes).toString("base64")}`;
+const dataUrlForBytes = (mime, bytes) => `data:image/${mime};base64,${Buffer.alloc(bytes).toString("base64")}`;
+const urlForBytes = bytes => dataUrlForBytes("png", bytes);
 const valid = { imageData: urlForBytes(1_850_000), thumbnailData: urlForBytes(290_000) };
 assert.equal(validate(valid).imageBytes, 1_850_000, "detail byte limit must be accepted");
 assert.equal(validate(valid).thumbnailBytes, 290_000, "thumbnail byte limit must be accepted");
@@ -33,15 +34,40 @@ const publish = Function("isValidCategory", "state", "serverNow", "db", "validat
 await assert.rejects(publish(), /그림 데이터가 너무 커서/);
 assert.equal(writes, 0, "oversized images must be rejected before any Firebase write");
 
-assert.match(rules.drawingImages.$drawingId.imageData[".validate"], /length <= 2466691/);
-assert.match(rules.drawingThumbnails.$drawingId.imageData[".validate"], /length <= 386691/);
-for (const validation of [rules.drawingImages.$drawingId.imageData[".validate"], rules.drawingThumbnails.$drawingId.imageData[".validate"]]) {
+const detailValidation = rules.drawingImages.$drawingId.imageData[".validate"];
+const thumbnailValidation = rules.drawingThumbnails.$drawingId.imageData[".validate"];
+const finalizationValidation = rules.drawings.$id[".validate"];
+const boundaryClause = (valueExpression, mime, maximum) => `${valueExpression}.matches(/^data:image\\/${mime};base64,/) && (${valueExpression}.length < ${maximum} || (${valueExpression}.length === ${maximum} && ${valueExpression}.matches(/=$/)))`;
+const boundaryAllows = (dataUrl, maximum) => dataUrl.length < maximum || (dataUrl.length === maximum && dataUrl.endsWith("="));
+const boundaryCases = [
+  { kind: "detail", bytes: 1_850_000, validation: detailValidation, limits: { png: 2_466_690, webp: 2_466_691 } },
+  { kind: "thumbnail", bytes: 290_000, validation: thumbnailValidation, limits: { png: 386_690, webp: 386_691 } }
+];
+for (const { kind, bytes, validation, limits } of boundaryCases) {
+  for (const mime of ["png", "webp"]) {
+    const atLimit = dataUrlForBytes(mime, bytes);
+    const overLimit = dataUrlForBytes(mime, bytes + 1);
+    assert.equal(atLimit.length, limits[mime], `${kind} ${mime} exact byte limit must use the documented total length`);
+    assert.equal(overLimit.length, limits[mime], `${kind} ${mime} limit+1 must share the same base64 length`);
+    assert.ok(atLimit.endsWith("=") && !overLimit.endsWith("="), `${kind} ${mime} boundary must be distinguished by padding`);
+    assert.equal(boundaryAllows(atLimit, limits[mime]), true);
+    assert.equal(boundaryAllows(overLimit, limits[mime]), false);
+    assert.ok(validation.includes(boundaryClause("newData.val()", mime, limits[mime])), `${kind} ${mime} Rules boundary clause is missing`);
+  }
+}
+for (const [path, limits] of [
+  ["drawingImages", { png: 2_466_690, webp: 2_466_691 }],
+  ["drawingThumbnails", { png: 386_690, webp: 386_691 }]
+]) {
+  const valueExpression = `root.child('${path}').child($id).child('imageData').val()`;
+  for (const mime of ["png", "webp"]) assert.ok(finalizationValidation.includes(boundaryClause(valueExpression, mime, limits[mime])), `finalization ${path} ${mime} boundary clause is missing`);
+}
+for (const validation of [detailValidation, thumbnailValidation]) {
   assert.match(validation, /\^data:image\\\/\(png\|webp\);base64,/);
   assert.match(validation, /\{2\}==/);
   assert.match(validation, /\{3\}=/);
   assert.match(validation, /\$\//, "Rules data URL validation must be anchored at the end");
 }
-const detailValidation = rules.drawingImages.$drawingId.imageData[".validate"];
 const rulePatternStart = detailValidation.lastIndexOf(".matches(/") + ".matches(/".length;
 const rulePatternEnd = detailValidation.indexOf("$/)", rulePatternStart);
 const rulePatternSource = detailValidation.slice(rulePatternStart, rulePatternEnd + 1);
@@ -53,7 +79,6 @@ for (const rejected of [
   "data:image/png;base64,AA AA", "data:image/png;base64,AA\nAA", "data:image/png;base64,AAAA,",
   "data:image/png;base64,한글", "data:image/png;base64,AAA*", "data:image/png;base64,AAAA===", "data:image/png;base64,A==="
 ]) assert.doesNotMatch(rejected, rulePattern);
-assert.match(rules.drawings.$id[".validate"], /length <= 2466691[\s\S]*length <= 386691/);
 assert.equal((rules.drawings.$id[".validate"].match(/\^data:image\\\/\(png\|webp\);base64,/g) || []).length, 2);
 assert.match(rules.drawings.$id.imageBytes[".validate"], /<= 1850000/);
 assert.match(rules.drawings.$id.thumbnailBytes[".validate"], /<= 290000/);

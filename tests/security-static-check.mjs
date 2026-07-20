@@ -18,7 +18,7 @@ assert.equal(count(/^async function submitAnswer/gm), 1, "submitAnswer must have
 assert.equal(count(/^async function toggleLike/gm), 1, "toggleLike must have one definition");
 assert.equal(count(/^async function toggleFeedbackReaction/gm), 1, "toggleFeedbackReaction must have one definition");
 assert.doesNotMatch(app, /applyLocally/, "compat transactions must use transaction(updateFn, null, false)");
-assert.equal(count(/,\s*null,\s*false\)/g), 7, "compat transactions must disable local events with the third argument");
+assert.equal(count(/,\s*null,\s*false\)/g), 6, "compat transactions without completion callbacks must disable local events with the third argument");
 assert.match(app, /successCount >= 10 \? 0 : successCount >= 5 \? 5 : 10/, "solver rewards must use 10, 5, 0 tiers");
 assert.match(app, /claim\.type === "solver"[^\n]+now - 3600000/, "recent solver successes must use a rolling hour");
 assert.match(app, /const drawerReward = 30/, "drawer solve reward must be 30");

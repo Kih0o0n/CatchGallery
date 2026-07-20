@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
-import { ref, set, update } from "firebase/database";
+import { get, ref, set, update } from "firebase/database";
 
 if (!process.env.FIREBASE_DATABASE_EMULATOR_HOST) {
   const message = "Firebase Database Emulator is required. Run `pnpm test:rules`.";
@@ -33,6 +33,22 @@ const legacyDrawing = (overrides = {}) => {
   return drawing;
 };
 const drawingRef = (db, id) => ref(db, `drawings/${id}`);
+const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo=";
+const WEBP_DATA_URL = "data:image/webp;base64,UklGRg==";
+const dataUrlForBytes = (mime, bytes) => `data:image/${mime};base64,${Buffer.alloc(bytes).toString("base64")}`;
+const editUpdate = (id, revisionCount, suffix = "") => ({
+  [`drawingImages/${id}/imageData`]: `data:image/png;base64,iVBORw0KGg${suffix || "o"}=`,
+  [`drawingThumbnails/${id}/imageData`]: WEBP_DATA_URL,
+  [`drawings/${id}/imageVersion`]: 1,
+  [`drawings/${id}/imageFormat`]: "webp",
+  [`drawings/${id}/imageWidth`]: 720,
+  [`drawings/${id}/imageHeight`]: 720,
+  [`drawings/${id}/imageBytes`]: 1000,
+  [`drawings/${id}/thumbnailBytes`]: 200,
+  [`drawings/${id}/imageReady`]: true,
+  [`drawings/${id}/updatedAt`]: now + revisionCount,
+  [`drawings/${id}/revisionCount`]: revisionCount
+});
 const staleCleanupUpdate = (id, timestamp = now) => ({
   [`drawingImages/${id}`]: null,
   [`drawingThumbnails/${id}`]: null,
@@ -52,6 +68,62 @@ try {
   await assertSucceeds(set(drawingRef(ownerDb, "new-ok"), baseDrawing()));
   await assertSucceeds(update(ref(ownerDb), { "drawingImages/new-ok/imageData": "data:image/webp;base64,AAAA", "drawingThumbnails/new-ok/imageData": "data:image/webp;base64,AAAA" }));
   await assertSucceeds(update(ref(ownerDb), { "drawings/new-ok/imageReady": true, "userDrawings/owner/new-ok": true }));
+  await seed({ imageFormats: baseDrawing() });
+  await assertSucceeds(set(ref(ownerDb, "drawingImages/imageFormats/imageData"), PNG_DATA_URL));
+  await assertSucceeds(set(ref(ownerDb, "drawingThumbnails/imageFormats/imageData"), WEBP_DATA_URL));
+  const malformedDataUrls = [
+    "data:image/jpeg;base64,AAAA",
+    "data:image/png;base64,",
+    "data:image/png;base64,AAAA suffix",
+    "data:image/png;base64,AA AA",
+    "data:image/png;base64,AA\nAA",
+    "data:image/png;base64,AAAA,",
+    "data:image/png;base64,한글",
+    "data:image/png;base64,AAA*",
+    "data:image/png;base64,AAAA===",
+    "data:image/png;base64,A==="
+  ];
+  for (const [index, value] of malformedDataUrls.entries()) {
+    await seed({ [`malformed-${index}`]: baseDrawing() });
+    await assertFails(set(ref(ownerDb, `drawingImages/malformed-${index}/imageData`), value));
+  }
+  for (const mime of ["png", "webp"]) {
+    const detailId = `detail-boundary-${mime}`;
+    const thumbnailId = `thumbnail-boundary-${mime}`;
+    const detailAtLimit = dataUrlForBytes(mime, 1_850_000);
+    const thumbnailAtLimit = dataUrlForBytes(mime, 290_000);
+    await seed({ [detailId]: baseDrawing() });
+    await assertSucceeds(set(ref(ownerDb, `drawingImages/${detailId}/imageData`), detailAtLimit));
+    await assertFails(set(ref(ownerDb, `drawingImages/${detailId}/imageData`), dataUrlForBytes(mime, 1_850_001)));
+    assert.equal((await get(ref(ownerDb, `drawingImages/${detailId}/imageData`))).val(), detailAtLimit);
+    await seed({ [thumbnailId]: baseDrawing() });
+    await assertSucceeds(set(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`), thumbnailAtLimit));
+    await assertFails(set(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`), dataUrlForBytes(mime, 290_001)));
+    assert.equal((await get(ref(ownerDb, `drawingThumbnails/${thumbnailId}/imageData`))).val(), thumbnailAtLimit);
+  }
+  const finalDetailAtLimit = dataUrlForBytes("png", 1_850_000);
+  const finalThumbnailAtLimit = dataUrlForBytes("webp", 290_000);
+  await seed({ boundaryFinalization: baseDrawing() }, {
+    drawingImages: { boundaryFinalization: { imageData: finalDetailAtLimit } },
+    drawingThumbnails: { boundaryFinalization: { imageData: finalThumbnailAtLimit } }
+  });
+  await assertSucceeds(update(ref(ownerDb), { "drawings/boundaryFinalization/imageReady": true, "userDrawings/owner/boundaryFinalization": true }));
+  for (const [id, detailBytes, thumbnailBytes] of [
+    ["detailBoundaryFailure", 1_850_001, 290_000],
+    ["thumbnailBoundaryFailure", 1_850_000, 290_001]
+  ]) {
+    const detailData = dataUrlForBytes("png", detailBytes);
+    const thumbnailData = dataUrlForBytes("webp", thumbnailBytes);
+    await seed({ [id]: baseDrawing() }, {
+      drawingImages: { [id]: { imageData: detailData } },
+      drawingThumbnails: { [id]: { imageData: thumbnailData } }
+    });
+    await assertFails(update(ref(ownerDb), { [`drawings/${id}/imageReady`]: true, [`userDrawings/owner/${id}`]: true }));
+    assert.equal((await get(drawingRef(ownerDb, id))).val().imageReady, false);
+    assert.equal((await get(ref(ownerDb, `userDrawings/owner/${id}`))).exists(), false);
+    assert.equal((await get(ref(ownerDb, `drawingImages/${id}/imageData`))).val(), detailData);
+    assert.equal((await get(ref(ownerDb, `drawingThumbnails/${id}/imageData`))).val(), thumbnailData);
+  }
   await seed({ detailOnly: baseDrawing() }, { drawingImages: { detailOnly: { imageData: "data:image/webp;base64,AAAA" } } });
   await assertFails(update(drawingRef(ownerDb, "detailOnly"), { imageReady: true }));
   await seed({ thumbOnly: baseDrawing() }, { drawingThumbnails: { thumbOnly: { imageData: "data:image/webp;base64,AAAA" } } });
@@ -63,6 +135,11 @@ try {
     drawingThumbnails: { invalidImages: { imageData: "not-an-image" } }
   });
   await assertFails(update(drawingRef(ownerDb, "invalidImages"), { imageReady: true }));
+  await seed({ malformedFinalization: baseDrawing() }, {
+    drawingImages: { malformedFinalization: { imageData: PNG_DATA_URL } },
+    drawingThumbnails: { malformedFinalization: { imageData: "data:image/webp;base64,AAAA suffix" } }
+  });
+  await assertFails(update(drawingRef(ownerDb, "malformedFinalization"), { imageReady: true }));
   await assertFails(set(drawingRef(ownerDb, "new-legacy"), baseDrawing({ imageData: "data:image/png;base64,AAAA" })));
   for (const [index, category] of ["<", ">", '"', "'", "`", "="].entries()) {
     await assertFails(set(drawingRef(ownerDb, `bad-category-${index}`), baseDrawing({ category: `안전${category}위험` })));
@@ -156,8 +233,42 @@ try {
   await seed({ [unsafeExistingId]: legacyDrawing() }, { drawingImages: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } }, drawingThumbnails: { [unsafeExistingId]: { imageData: "data:image/webp;base64,AAAA" } } });
   await assertFails(update(drawingRef(adminDb, unsafeExistingId), { imageData: null, imageReady: true, imageVersion: 1, imageFormat: "webp", imageWidth: 720, imageHeight: 720, imageBytes: 1000, thumbnailBytes: 200 }));
 
-  await seed({ safeOpen: completeDrawing() });
-  await assertSucceeds(update(drawingRef(ownerDb, "safeOpen"), { updatedAt: now + 1 }));
+  await seed({ safeOpen: completeDrawing() }, { drawingImages: { safeOpen: { imageData: PNG_DATA_URL } }, drawingThumbnails: { safeOpen: { imageData: WEBP_DATA_URL } } });
+  await assertSucceeds(update(ref(ownerDb), editUpdate("safeOpen", 1)));
+  assert.equal((await get(drawingRef(ownerDb, "safeOpen"))).val().revisionCount, 1);
+
+  for (const [id, drawing] of [
+    ["editSolved", completeDrawing({ status: "solved", solverId: "solver", solverNickname: "맞힌이", solvedAt: now })],
+    ["editExpired", completeDrawing({ expiresAt: now - 1 })],
+    ["editWithdrawn", completeDrawing({ status: "withdrawn", withdrawnAt: now })]
+  ]) {
+    await seed({ [id]: drawing }, { drawingImages: { [id]: { imageData: PNG_DATA_URL } }, drawingThumbnails: { [id]: { imageData: WEBP_DATA_URL } } });
+    const beforeDrawing = (await get(drawingRef(ownerDb, id))).val();
+    const beforeImage = (await get(ref(ownerDb, `drawingImages/${id}`))).val();
+    const beforeThumbnail = (await get(ref(ownerDb, `drawingThumbnails/${id}`))).val();
+    await assertFails(update(ref(ownerDb), editUpdate(id, 1)));
+    const afterDrawing = (await get(drawingRef(ownerDb, id))).val();
+    const afterImage = (await get(ref(ownerDb, `drawingImages/${id}`))).val();
+    const afterThumbnail = (await get(ref(ownerDb, `drawingThumbnails/${id}`))).val();
+    assert.deepEqual(afterDrawing, beforeDrawing);
+    assert.deepEqual(afterImage, beforeImage);
+    assert.deepEqual(afterThumbnail, beforeThumbnail);
+  }
+
+  await seed({ concurrentEdit: completeDrawing() }, { drawingImages: { concurrentEdit: { imageData: PNG_DATA_URL } }, drawingThumbnails: { concurrentEdit: { imageData: WEBP_DATA_URL } } });
+  const secondOwnerDb = environment.authenticatedContext("owner").database();
+  const editResults = await Promise.allSettled([
+    update(ref(ownerDb), editUpdate("concurrentEdit", 1)),
+    update(ref(secondOwnerDb), editUpdate("concurrentEdit", 1, "w"))
+  ]);
+  assert.deepEqual(editResults.map(result => result.status).sort(), ["fulfilled", "rejected"]);
+  assert.equal((await get(drawingRef(ownerDb, "concurrentEdit"))).val().revisionCount, 1);
+
+  await seed({ atomicLegacy: legacyDrawing() });
+  await assertSucceeds(update(ref(ownerDb), { ...editUpdate("atomicLegacy", 1), "drawings/atomicLegacy/imageData": null }));
+  const migratedLegacy = (await get(drawingRef(ownerDb, "atomicLegacy"))).val();
+  assert.equal(migratedLegacy.imageData, undefined);
+  assert.equal(migratedLegacy.revisionCount, 1);
   await seed({ safeSolve: completeDrawing() });
   await assertSucceeds(set(drawingRef(solverDb, "safeSolve"), { ...completeDrawing(), status: "solved", solverId: "solver", solverNickname: "맞힌이", solvedAt: now, hintUsed: false, solverReward: 10, drawerReward: 30, updatedAt: now }));
 

@@ -2236,25 +2236,29 @@ function observeSolveImages(list, request) {
   return loader;
 }
 async function updateDrawing(drawingId) {
-  const optimized = validateOptimizedImages(await optimizeCanvasImages(state.canvas));
-  const now = serverNow();
+  if (!isSafeRecordId(drawingId)) throw new Error("수정할 수 없는 그림이에요.");
   const ref = db.ref(`drawings/${drawingId}`);
-  const fallbackDrawing = (await ref.once("value")).val();
-  if (!fallbackDrawing || fallbackDrawing.status !== "open" || !isOwnDrawing(fallbackDrawing) || fallbackDrawing.solverId || Number(fallbackDrawing.expiresAt) <= now) throw new Error("수정할 수 없는 그림이에요.");
-  await db.ref().update({
+  const drawing = (await ref.once("value")).val();
+  const readAt = serverNow();
+  if (!drawing || drawing.status !== "open" || !isOwnDrawing(drawing) || drawing.solverId || Number(drawing.expiresAt) <= readAt || !hasPublicDrawingImage(drawing)) throw new Error("수정할 수 없는 그림이에요.");
+  const optimized = validateOptimizedImages(await optimizeCanvasImages(state.canvas));
+  const updatedAt = serverNow();
+  if (Number(drawing.expiresAt) <= updatedAt) throw new Error("수정할 수 없는 그림이에요.");
+  const updates = {
     [`drawingImages/${drawingId}/imageData`]: optimized.imageData,
-    [`drawingThumbnails/${drawingId}/imageData`]: optimized.thumbnailData
-  });
-  let reason = "수정할 수 없는 그림이에요.";
-  const result = await ref.transaction(current => {
-    const d = current || fallbackDrawing;
-    if (!d) return;
-    if (d.status !== "open" || !isOwnDrawing(d) || d.solverId || Number(d.expiresAt) <= now) return;
-    reason = "";
-    const { imageData: legacyImageData, ...metadata } = d;
-    return { ...metadata, imageVersion: IMAGE_OPTIONS.version, imageFormat: optimized.imageFormat, imageWidth: optimized.imageWidth, imageHeight: optimized.imageHeight, imageBytes: optimized.imageBytes, thumbnailBytes: optimized.thumbnailBytes, imageReady: true, updatedAt: now, revisionCount: (Number(d.revisionCount) || 0) + 1 };
-  }, null, false);
-  if (!result.committed) throw new Error(reason);
+    [`drawingThumbnails/${drawingId}/imageData`]: optimized.thumbnailData,
+    [`drawings/${drawingId}/imageVersion`]: IMAGE_OPTIONS.version,
+    [`drawings/${drawingId}/imageFormat`]: optimized.imageFormat,
+    [`drawings/${drawingId}/imageWidth`]: optimized.imageWidth,
+    [`drawings/${drawingId}/imageHeight`]: optimized.imageHeight,
+    [`drawings/${drawingId}/imageBytes`]: optimized.imageBytes,
+    [`drawings/${drawingId}/thumbnailBytes`]: optimized.thumbnailBytes,
+    [`drawings/${drawingId}/imageReady`]: true,
+    [`drawings/${drawingId}/updatedAt`]: updatedAt,
+    [`drawings/${drawingId}/revisionCount`]: (Number(drawing.revisionCount) || 0) + 1
+  };
+  if (drawing.imageData) updates[`drawings/${drawingId}/imageData`] = null;
+  await db.ref().update(updates);
   return { imageData: optimized.imageData, thumbnailData: optimized.thumbnailData };
 }
 async function withdrawDrawing(drawingId) {
@@ -2588,7 +2592,7 @@ async function runMigrationBatch(root) {
   if (closeButton) closeButton.disabled = true;
   let canContinue = false;
   let stage = "관리자 권한 확인";
-  const totals = { success: 0, failed: 0, skipped: 0, original: 0, converted: 0 };
+  const totals = { success: 0, failed: 0, skipped: 0, unsafeSkipped: 0, original: 0, converted: 0 };
   try {
     status.textContent = "그림 목록을 확인하는 중...";
     if (!state.isAdmin || auth.currentUser?.uid !== state.user?.id) { const error = new Error("관리자 권한 없음"); error.code = "PERMISSION_DENIED"; throw error; }
@@ -2604,6 +2608,12 @@ async function runMigrationBatch(root) {
     }
     for (let index = 0; index < items.length; index++) {
       const drawing = items[index];
+      if (!isSafeRecordId(drawing.id)) {
+        totals.skipped++;
+        totals.unsafeSkipped++;
+        console.warn(`[gallery migration] unsafe drawing ID 건너뜀: ${drawing.id}`);
+        continue;
+      }
       if (!drawing.imageData) { totals.skipped++; continue; }
       try {
         let optimized = null;
@@ -2628,7 +2638,7 @@ async function runMigrationBatch(root) {
     }
     const saved = Math.max(0, totals.original - totals.converted);
     const resultTitle = totals.failed > 0 ? "최적화 중 오류가 발생했습니다." : totals.success === 0 ? "모든 기존 그림의 최적화가 완료되었습니다." : "최적화 완료";
-    status.innerHTML = `<p>${resultTitle}</p><p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped}</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
+    status.innerHTML = `<p>${resultTitle}</p><p>성공 ${totals.success} · 실패 ${totals.failed} · 건너뜀 ${totals.skipped} (unsafe ID ${totals.unsafeSkipped})</p><p>원본 ${Math.round(totals.original / 1024)}KB · 변환 후 ${Math.round(totals.converted / 1024)}KB · 절감 ${Math.round(saved / 1024)}KB</p>`;
     state.migrationCursor = migrationNextCursor(batchStartCursor, items, totals.failed > 0);
     canContinue = totals.failed > 0 || items.length >= IMAGE_OPTIONS.migrationBatch;
   } catch (error) {

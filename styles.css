@@ -83,8 +83,9 @@ input:focus, select:focus { border-color: var(--pink); box-shadow: 0 0 0 4px rgb
 .answer-help-button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: var(--lavender); font-weight: 700; }
 .answer-help { margin: -2px 0 8px; padding: 9px 10px; border-radius: 11px; background: #f7f2ff; color: #65548a; font-size: 12px; line-height: 1.45; }
 .custom-answer-summary { display: block; color: var(--muted); font-size: 11px; }
-.canvas-wrap { width: min(100%, 720px); max-width: 720px; background: white; border: 3px solid #eadfd9; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); aspect-ratio: 1/1; touch-action: none; overscroll-behavior: contain; }
+.canvas-wrap { position: relative; width: min(100%, 720px); max-width: 720px; background: white; border: 3px solid #eadfd9; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); aspect-ratio: 1/1; touch-action: none; overscroll-behavior: contain; }
 canvas { display: block; width: 100%; height: 100%; touch-action: none; overscroll-behavior: contain; background: white; }
+#metallicPreviewCanvas { position: absolute; inset: 0; z-index: 1; pointer-events: none; background: transparent; }
 .tools { margin: 12px 0; }
 .colors { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); justify-items: center; gap: 6px; margin-bottom: 10px; }
 .color { width: 38px; height: 38px; border: 3px solid white; outline: 2px solid transparent; border-radius: 50%; padding: 0; background: var(--swatch-color); }
@@ -233,12 +234,14 @@ body.canvas-touch-session-lock {
   width: 100%;
 }
 .canvas-wrap,
-#drawingCanvas {
+#drawingCanvas,
+#metallicPreviewCanvas {
   overscroll-behavior: none !important;
 }
 
 .canvas-wrap,
-#drawingCanvas {
+#drawingCanvas,
+#metallicPreviewCanvas {
   touch-action: none !important;
   -webkit-user-select: none !important;
   user-select: none !important;

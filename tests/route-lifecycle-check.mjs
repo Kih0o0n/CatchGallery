@@ -108,12 +108,14 @@ function deferred() {
   let image;
   let draws = 0;
   const context = { lineCap: "", lineJoin: "", globalCompositeOperation: "", strokeStyle: "", lineWidth: 0, drawImage: () => draws++ };
+  const previewContext = { lineCap: "", lineJoin: "", clearRect: () => {} };
   const viewport = { clientWidth: 360, clientHeight: 360, clientLeft: 0, clientTop: 0, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
   const canvas = { isConnected: true, clientWidth: 360, clientHeight: 360, style: {}, closest: () => viewport, getContext: () => context, addEventListener: () => {}, removeEventListener: () => {} };
+  const previewCanvas = { isConnected: true, width: 720, height: 720, style: {}, getContext: () => previewContext };
   const state = { route: "draw", canvas: null, ctx: null, history: [], dirty: false, activePointerId: null, editImageRequestId: 0 };
   class TestImage { set src(value) { this.value = value; image = this; } }
   const eventTarget = { addEventListener: () => {}, removeEventListener: () => {} };
-  const document = { ...eventTarget, visibilityState: "visible", querySelector: selector => selector === "#drawingCanvas" ? canvas : { value: 9 } };
+  const document = { ...eventTarget, visibilityState: "visible", querySelector: selector => selector === "#drawingCanvas" ? canvas : selector === "#metallicPreviewCanvas" ? previewCanvas : { value: 9 } };
   const setupCanvas = Function("state", "document", "window", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "lockDrawingScroll", "unlockDrawingScroll", "initializeCanvasHistory", "canvasPoint", "commitCanvasAction", "compactCanvasHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded", "Image", "routeTransitionId", "isTransitionCurrent", "console", `${canvasGestureMathSource}; ${setupCanvasSource}; return setupCanvas;`)(
     state, document, eventTarget, () => {}, () => {}, () => {}, () => {}, () => { state.historyBaseCanvas = canvas; state.historyBaseContext = context; }, () => ({ x: 0, y: 0 }), () => {}, () => {}, () => {}, () => {}, () => true, () => true, () => false, TestImage, 1, () => true, { warn: () => {} }
   );

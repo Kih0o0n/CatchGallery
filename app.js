@@ -356,6 +356,9 @@ const state = {
   brushInput: null,
   currentBrushKind: "solid",
   strokeSeedCounter: 0,
+  metallicPreviewCanvas: null,
+  metallicPreviewContext: null,
+  metallicPreviewFrame: 0,
   canvasInputCleanup: null,
   canvasZoomScale: 1,
   canvasZoomX: 0,
@@ -1116,7 +1119,7 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name, brush], i) => { const special = brush !== "solid"; const label = `${name} ${special ? "특수 브러시" : "색연필"}`; return `<button class="color ${special ? "metallic-color " : ""}${i === DEFAULT_DRAWING_COLOR_INDEX ? "selected" : ""}" data-color="${value}" data-brush="${brush}" style="--swatch-color:${value}" aria-label="${label}" title="${label}" aria-pressed="${i === DEFAULT_DRAWING_COLOR_INDEX ? "true" : "false"}"></button>`; }).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas><canvas id="metallicPreviewCanvas" width="720" height="720" aria-hidden="true"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name, brush], i) => { const special = brush !== "solid"; const label = `${name} ${special ? "특수 브러시" : "색연필"}`; return `<button class="color ${special ? "metallic-color " : ""}${i === DEFAULT_DRAWING_COLOR_INDEX ? "selected" : ""}" data-color="${value}" data-brush="${brush}" style="--swatch-color:${value}" aria-label="${label}" title="${label}" aria-pressed="${i === DEFAULT_DRAWING_COLOR_INDEX ? "true" : "false"}"></button>`; }).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
   eraser.onclick = () => {
@@ -1373,6 +1376,9 @@ function releaseCanvasHistory() {
   state.brushInput = null;
   state.currentBrushKind = "solid";
   state.strokeSeedCounter = 0;
+  state.metallicPreviewCanvas = null;
+  state.metallicPreviewContext = null;
+  state.metallicPreviewFrame = 0;
   state.drawing = false;
   state.activePointerId = null;
   state.activePointerType = null;
@@ -1551,6 +1557,7 @@ function redrawCanvasFromHistory() {
   state.ctx.lineWidth = tool.width;
   state.ctx.lineCap = "round";
   state.ctx.lineJoin = "round";
+  if (!state.activeStroke) state.historyRedrawPending = false;
 }
 function redrawCanvasWhenIdle() {
   if (state.activeStroke) {
@@ -1667,14 +1674,24 @@ function setupCanvas(imageData) {
 
   const canvas = state.canvas;
   const context = state.ctx;
+  const previewCanvas = document.querySelector("#metallicPreviewCanvas");
+  const previewContext = previewCanvas?.getContext("2d") || null;
+  state.metallicPreviewCanvas = previewCanvas;
+  state.metallicPreviewContext = previewContext;
+  state.metallicPreviewFrame = 0;
+  if (previewContext) {
+    previewContext.lineCap = "round";
+    previewContext.lineJoin = "round";
+  }
   const viewport = canvas.closest?.(".canvas-wrap") || canvas.parentElement;
-  const ownsCanvas = () => state.route === "draw" && state.canvas === canvas && state.ctx === context && canvas.isConnected;
+  const ownsCanvas = () => state.route === "draw" && state.canvas === canvas && state.ctx === context && state.metallicPreviewCanvas === previewCanvas && canvas.isConnected && !!previewCanvas?.isConnected;
   let inputDisposed = false;
   let activeStrokeInitialDirty = false;
   let gestureStart = null;
   let gesturePointerIds = [];
   let resizeObserver = null;
   let viewportFrame = 0;
+  let metallicPreviewFrame = 0;
   const eventTime = event => Number.isFinite(event?.timeStamp) ? event.timeStamp : null;
   const viewportSize = () => ({ width: Number(viewport?.clientWidth || canvas.clientWidth || 0), height: Number(viewport?.clientHeight || canvas.clientHeight || 0) });
   const applyCanvasTransform = transform => {
@@ -1683,10 +1700,13 @@ function setupCanvas(imageData) {
     state.canvasZoomScale = safe.scale;
     state.canvasZoomX = safe.x;
     state.canvasZoomY = safe.y;
-    canvas.style.transformOrigin = "0 0";
-    canvas.style.transform = safe.scale === 1 && safe.x === 0 && safe.y === 0
+    const canvasTransform = safe.scale === 1 && safe.x === 0 && safe.y === 0
       ? ""
       : `translate(${safe.x}px, ${safe.y}px) scale(${safe.scale})`;
+    [canvas, previewCanvas].filter(Boolean).forEach(layer => {
+      layer.style.transformOrigin = "0 0";
+      layer.style.transform = canvasTransform;
+    });
     return safe;
   };
   const viewportPoint = event => {
@@ -1694,7 +1714,32 @@ function setupCanvas(imageData) {
     return { x: event.clientX - rect.left - Number(viewport.clientLeft || 0), y: event.clientY - rect.top - Number(viewport.clientTop || 0) };
   };
   const gesturePoints = () => gesturePointerIds.map(id => state.canvasGesturePointers.get(id)).filter(Boolean);
+  const cancelMetallicPreviewFrame = () => {
+    if (metallicPreviewFrame) window.cancelAnimationFrame(metallicPreviewFrame);
+    metallicPreviewFrame = 0;
+    state.metallicPreviewFrame = 0;
+  };
+  const clearMetallicPreview = () => {
+    cancelMetallicPreviewFrame();
+    previewContext?.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  };
+  const renderMetallicPreview = () => {
+    metallicPreviewFrame = 0;
+    state.metallicPreviewFrame = 0;
+    if (inputDisposed || !ownsCanvas() || !previewContext) return false;
+    previewContext.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    if (!state.activeStroke || !METALLIC_BRUSHES[state.activeStroke.brushKind]) return false;
+    drawMetallicStroke(previewContext, state.activeStroke, { sparkles: false });
+    return true;
+  };
+  const scheduleMetallicPreview = () => {
+    if (metallicPreviewFrame || inputDisposed || !previewContext) return false;
+    metallicPreviewFrame = window.requestAnimationFrame(renderMetallicPreview);
+    state.metallicPreviewFrame = metallicPreviewFrame;
+    return true;
+  };
   const clearActivePointer = () => {
+    clearMetallicPreview();
     state.drawing = false;
     state.activePointerId = null;
     state.activePointerType = null;
@@ -1714,7 +1759,7 @@ function setupCanvas(imageData) {
     context.closePath();
     let committed = false;
     if (commit && (stroke.points.length > 1 || commitDot)) {
-      if (stroke.points.length === 1) applyCanvasAction(context, stroke);
+      if (stroke.points.length === 1 && !METALLIC_BRUSHES[stroke.brushKind]) applyCanvasAction(context, stroke);
       committed = commitCanvasAction(stroke);
       if (committed) state.dirty = true;
     }
@@ -1726,9 +1771,11 @@ function setupCanvas(imageData) {
   const cancelStrokeForGesture = () => {
     if (state.activePointerType !== "touch" || !state.activeStroke) return false;
     const dirty = activeStrokeInitialDirty;
+    const metallic = !!METALLIC_BRUSHES[state.activeStroke.brushKind];
+    const pending = state.historyRedrawPending;
     finish(null, { releaseCapture: false, commit: false });
     state.dirty = dirty;
-    redrawCanvasFromHistory();
+    if (!metallic && !pending) redrawCanvasFromHistory();
     return true;
   };
   const beginGesture = event => {
@@ -1823,11 +1870,15 @@ function setupCanvas(imageData) {
     };
     activeStrokeInitialDirty = state.dirty;
     state.drawing = true;
-    context.globalCompositeOperation = state.activeStroke.compositeOperation;
-    context.strokeStyle = state.activeStroke.color;
-    context.lineWidth = state.activeStroke.width;
-    context.beginPath();
-    context.moveTo(point.x, point.y);
+    if (METALLIC_BRUSHES[state.activeStroke.brushKind]) renderMetallicPreview();
+    else {
+      clearMetallicPreview();
+      context.globalCompositeOperation = state.activeStroke.compositeOperation;
+      context.strokeStyle = state.activeStroke.color;
+      context.lineWidth = state.activeStroke.width;
+      context.beginPath();
+      context.moveTo(point.x, point.y);
+    }
     state.activePointerCaptured = safeSetPointerCapture(canvas, event.pointerId);
   };
   const move = event => {
@@ -1854,7 +1905,7 @@ function setupCanvas(imageData) {
     if (sameCanvasPoint(lastPoint, point)) return;
     state.activeStroke.points.push(point);
     if (METALLIC_BRUSHES[state.activeStroke.brushKind]) {
-      drawMetallicStroke(context, { ...state.activeStroke, points: [lastPoint, point] }, { sparkles: false });
+      scheduleMetallicPreview();
     } else {
       context.globalCompositeOperation = state.activeStroke.compositeOperation;
       context.strokeStyle = state.activeStroke.color;

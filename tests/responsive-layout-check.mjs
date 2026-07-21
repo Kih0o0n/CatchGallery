@@ -81,10 +81,11 @@ function classList(initial = []) {
   const renderDraw = Function(...names, `"use strict"; ${pick("renderDraw")}; return renderDraw;`)(...values);
   renderDraw();
 
-  for (const id of ["drawingCanvas", "brushSize", "eraser", "undo", "clearCanvas", "saveDrawing", "customWordForm", "customWordButton"]) {
+  for (const id of ["drawingCanvas", "metallicPreviewCanvas", "brushSize", "eraser", "undo", "clearCanvas", "saveDrawing", "customWordForm", "customWordButton"]) {
     assert.equal((appEl.innerHTML.match(new RegExp(`id="${id}"`, "g")) || []).length, 1, `${id} must appear once`);
   }
   assert.match(appEl.innerHTML, /<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720"/);
+  assert.match(appEl.innerHTML, /<canvas id="metallicPreviewCanvas" width="720" height="720" aria-hidden="true"><\/canvas>/);
   assert.equal((appEl.innerHTML.match(/data-color=/g) || []).length, drawingColors.length);
   assert.match(appEl.innerHTML, /<div class="tools"><div class="drawing-palette"><div class="colors"[\s\S]*id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
   assert.ok(appEl.innerHTML.indexOf('class="card word-card"') < appEl.innerHTML.indexOf('class="custom-word-form hidden"'));
@@ -147,7 +148,9 @@ assert.doesNotMatch(styles, /calc\(100dvh - 447px\)|54dvh/);
 assert.match(app, /function setDrawViewportMode\(active\)[\s\S]*document\.documentElement\.classList\.toggle\("draw-viewport-active", active\)[\s\S]*document\.body\.classList\.toggle\("draw-viewport-active", active\)/);
 assert.match(styles, /#drawingCanvas\s*\{[^}]*transform-origin:\s*0 0/);
 assert.doesNotMatch(styles, /#drawingCanvas\s*\{[^}]*transition/);
-assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas\s*\{[^}]*touch-action:\s*none/);
+assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas,\s*#metallicPreviewCanvas\s*\{[^}]*touch-action:\s*none/);
+assert.match(styles, /#metallicPreviewCanvas\s*\{[^}]*position:\s*absolute[^}]*pointer-events:\s*none[^}]*background:\s*transparent/);
+assert.match(app, /\[canvas, previewCanvas\]\.filter\(Boolean\)\.forEach[\s\S]*layer\.style\.transform = canvasTransform/);
 assert.match(fixture, /<header class="app-header">\s*<button class="home-button"[\s\S]*<button class="brand-button"[\s\S]*<div class="score-chip"/);
 assert.match(fixture, /<div class="tools"><div class="drawing-palette"><div class="colors" data-colors><\/div><button id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
 assert.doesNotMatch(styles, /drawing-scroll-lock|body\.drawing-scroll-lock[\s\S]*position:\s*fixed/);

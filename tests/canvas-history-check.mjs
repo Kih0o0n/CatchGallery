@@ -124,6 +124,8 @@ assert.doesNotMatch(source.match(/function setupCanvas[\s\S]*?(?=function undoCa
 function setupHarness({ imageData = null, current = true, throwSetCapture = false, throwReleaseCapture = false } = {}) {
   const context = fakeContext();
   const canvas = fakeCanvas(context);
+  const previewContext = fakeContext();
+  const previewCanvas = fakeCanvas(previewContext);
   const baseContext = fakeContext();
   const baseCanvas = fakeCanvas(baseContext);
   const brush = { value: "9" };
@@ -137,7 +139,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   const document = {
     ...documentEvents,
     visibilityState: "visible",
-    querySelector(selector) { if (selector === "#drawingCanvas") { drawingQueries++; return canvas; } if (selector === "#brushSize") { brushQueries++; return brush; } return null; },
+    querySelector(selector) { if (selector === "#drawingCanvas") { drawingQueries++; return canvas; } if (selector === "#metallicPreviewCanvas") return previewCanvas; if (selector === "#brushSize") { brushQueries++; return brush; } return null; },
     createElement: () => baseCanvas
   };
   class TestImage { constructor() { image = this; } set src(value) { this.value = value; } }
@@ -150,7 +152,7 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
     state, document, windowTarget, 15, 1500, METALLIC_BRUSHES, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, () => { touchSessionLocks++; lockRectReads = canvas.rectReads; }, (event, target) => target === canvas, () => { touchFallbackSchedules++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
-  return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears, touchSessionLocks, touchFallbackSchedules, lockRectReads }) };
+  return { state, canvas, context, previewCanvas, previewContext, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears, touchSessionLocks, touchFallbackSchedules, lockRectReads }) };
 }
 function assertPointerMetadataCleared(state) {
   assert.equal(state.activePointerId, null);
@@ -205,6 +207,7 @@ function assertPointerMetadataCleared(state) {
   assert.ok(h.state.canvasZoomScale > 1 && h.state.canvasZoomScale <= 2.5);
   assert.ok(h.state.canvasZoomX <= 0 && h.state.canvasZoomY <= 0);
   assert.match(h.canvas.style.transform, /^translate\(/);
+  assert.equal(h.previewCanvas.style.transform, h.canvas.style.transform, "metallic preview follows the main canvas zoom transform");
   const zoomTransform = h.canvas.style.transform;
   h.canvas.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 100, clientY: 110 });
   h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 320, clientY: 90 });
@@ -213,6 +216,7 @@ function assertPointerMetadataCleared(state) {
   h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 220, clientY: 70 });
   assert.deepEqual([h.state.canvasZoomScale, h.state.canvasZoomX, h.state.canvasZoomY], [1, 0, 0]);
   assert.equal(h.canvas.style.transform, "", "pinching exactly back to default zoom removes the inline transform");
+  assert.equal(h.previewCanvas.style.transform, "", "metallic preview also returns to the neutral transform");
   h.canvas.emit("pointermove", { pointerId: 61, pointerType: "touch", clientX: 300, clientY: 70 });
   h.canvas.emit("pointerup", { pointerId: 60, pointerType: "touch" });
   assert.equal(h.state.canvasGestureActive, false);
@@ -419,6 +423,76 @@ for (const interruptType of ["blur", "pagehide"]) {
   assert.ok(drawIndex >= 0);
   assert.ok(h.context.calls.slice(drawIndex + 1).some(call => call[0] === "stroke"), "the completed stroke replays above the edit base");
   assert.equal(h.state.dirty, true);
+}
+
+{
+  const h = setupHarness();
+  h.state.currentBrushKind = "glitter-gold";
+  h.context.strokeStyle = "#d6a928";
+  const mainCallsBeforeStroke = h.context.calls.length;
+  h.canvas.emit("pointerdown", { pointerId: 80, pointerType: "mouse", clientX: 20, clientY: 30 });
+  assert.ok(h.previewContext.calls.some(call => call[0] === "arc"), "a metallic dot is visible on the preview canvas at pointerdown");
+  assert.equal(h.context.calls.length, mainCallsBeforeStroke, "metallic pointerdown leaves the committed main canvas untouched");
+  h.canvas.emit("pointermove", { pointerId: 80, pointerType: "mouse", clientX: 22, clientY: 30 });
+  const scheduledFrame = h.state.metallicPreviewFrame;
+  h.canvas.emit("pointermove", { pointerId: 80, pointerType: "mouse", clientX: 24, clientY: 30 });
+  assert.equal(h.state.metallicPreviewFrame, scheduledFrame, "consecutive metallic moves share one preview frame");
+  assert.equal(h.context.calls.length, mainCallsBeforeStroke, "metallic segments are not accumulated on the main canvas");
+  h.flushFrame();
+  assert.equal(h.state.metallicPreviewFrame, 0);
+  assert.ok(h.previewContext.calls.some(call => call[0] === "lineTo"), "the scheduled frame renders the full active path on the preview canvas");
+  h.canvas.emit("pointerup", { pointerId: 80, pointerType: "mouse", clientX: 24, clientY: 30 });
+  assert.equal(h.state.history.length, 1);
+  assert.equal(h.state.history[0].brushKind, "glitter-gold");
+  assert.equal(h.state.metallicPreviewFrame, 0);
+  assert.equal(h.previewContext.calls.at(-1)[0], "clearRect", "commit clears the active overlay");
+  assert.ok(h.context.calls.some(call => call[0] === "drawImage"), "metallic commit performs one canonical history replay");
+  h.canvas.emit("lostpointercapture", { pointerId: 80, pointerType: "mouse" });
+  assert.equal(h.state.history.length, 1, "a duplicate terminal event cannot recommit the metallic stroke");
+}
+
+{
+  const h = setupHarness({ imageData: "metallic-pending" });
+  h.state.currentBrushKind = "glitter-silver";
+  h.context.strokeStyle = "#aeb7c2";
+  h.canvas.emit("pointerdown", { pointerId: 81, pointerType: "touch", clientX: 20, clientY: 30 });
+  h.canvas.emit("pointermove", { pointerId: 81, pointerType: "touch", clientX: 30, clientY: 40 });
+  h.image().onload();
+  assert.equal(h.state.historyRedrawPending, true, "an edit image finishing during the active metallic stroke defers replay");
+  h.canvas.emit("pointerup", { pointerId: 81, pointerType: "touch", clientX: 30, clientY: 40 });
+  assert.equal(h.state.historyRedrawPending, false, "the successful metallic canonical replay consumes the pending request");
+  const replaysAfterMetallic = h.context.calls.filter(call => call[0] === "clearRect").length;
+  h.state.currentBrushKind = "solid";
+  h.context.strokeStyle = "#ff0000";
+  h.canvas.emit("pointerdown", { pointerId: 82, pointerType: "mouse", clientX: 40, clientY: 50 });
+  h.canvas.emit("pointermove", { pointerId: 82, pointerType: "mouse", clientX: 50, clientY: 60 });
+  h.canvas.emit("pointerup", { pointerId: 82, pointerType: "mouse", clientX: 50, clientY: 60 });
+  assert.equal(h.context.calls.filter(call => call[0] === "clearRect").length, replaysAfterMetallic, "the next ordinary stroke does not trigger a stale full replay");
+  h.state.currentBrushKind = "glitter-silver";
+  h.canvas.emit("pointerdown", { pointerId: 83, pointerType: "touch", clientX: 60, clientY: 70 });
+  h.canvas.emit("pointermove", { pointerId: 83, pointerType: "touch", clientX: 70, clientY: 80 });
+  const replaysBeforePinch = h.context.calls.filter(call => call[0] === "clearRect").length;
+  h.canvas.emit("pointerdown", { pointerId: 84, pointerType: "touch", isPrimary: false, clientX: 180, clientY: 70 });
+  assert.equal(h.state.history.length, 2, "pinch takeover does not commit the active metallic stroke");
+  assert.equal(h.previewContext.calls.at(-1)[0], "clearRect", "pinch takeover clears the metallic preview");
+  assert.equal(h.context.calls.filter(call => call[0] === "clearRect").length, replaysBeforePinch, "pinch takeover does not replay an untouched main canvas");
+}
+
+{
+  const h = setupHarness();
+  h.state.currentBrushKind = "glitter-gold";
+  h.canvas.emit("pointerdown", { pointerId: 85, pointerType: "mouse", clientX: 20, clientY: 30 });
+  h.canvas.emit("pointermove", { pointerId: 85, pointerType: "mouse", clientX: 40, clientY: 50 });
+  assert.notEqual(h.state.metallicPreviewFrame, 0);
+  const previewCallsBeforeCleanup = h.previewContext.calls.length;
+  h.releaseCanvasHistory();
+  assert.equal(h.state.metallicPreviewCanvas, null);
+  assert.equal(h.state.metallicPreviewContext, null);
+  assert.equal(h.state.metallicPreviewFrame, 0);
+  assert.ok(h.previewContext.calls.length > previewCallsBeforeCleanup, "route cleanup clears the preview");
+  const previewCallsAfterCleanup = h.previewContext.calls.length;
+  h.flushFrame();
+  assert.equal(h.previewContext.calls.length, previewCallsAfterCleanup, "a cancelled late frame cannot draw into a disposed route");
 }
 
 {

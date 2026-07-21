@@ -32,7 +32,7 @@ assert.match(app, /function expireOldDrawings\([^)]*\)[\s\S]*fallbackDrawing = d
 assert.match(app, /status: \"expired\", expiredAt, updatedAt: expiredAt/, "expiration must write expired timestamps");
 assert.match(app, /"학교 \/ 문구"|"전자기기 \/ 기계"/, "expanded prompt categories must be present");
 assert.match(app, /운전기사: "운전기사,기사,기사님"/, "driver answer aliases must be present");
-assert.match(app, /findIndex\(candidate => candidate\.word === entry\.word\)/, "default words must be deduplicated");
+assert.match(app, /findIndex\(candidate => candidate\.category === entry\.category && candidate\.word === entry\.word\)/, "default words must be deduplicated by category and word");
 assert.match(app, /home-version[^\n]+v1\.2\.0/, "home version must show v1.2.0");
 assert.match(app, /function adminDeleteDrawing\(drawingId\)/, "admin drawing soft delete must exist");
 assert.match(app, /status: "adminDeleted"/, "admin delete must use soft delete status");

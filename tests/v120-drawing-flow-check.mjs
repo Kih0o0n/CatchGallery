@@ -240,6 +240,6 @@ assert.match(app, /function openClearCanvasModal\([\s\S]*clearCanvasBoard\(true\
 assert.match(styles, /\.colors[^}]+grid-template-columns:\s*repeat\(8,/);
 assert.match(styles, /\.draw-screen \.color \{ width: clamp\(30px, 9vw, 38px\); height: clamp\(30px, 9vw, 38px\)/);
 assert.doesNotMatch(styles.match(/\.colors \{[^}]+\}/)?.[0] || "", /overflow-x|white-space:\s*nowrap/);
-assert.match(app, /home-version[^\n]+v1\.2\.0/);
+assert.match(app, /home-version[^\n]+v1\.3\.0/);
 
 console.log("v1.2.0 drawing flow checks passed.");

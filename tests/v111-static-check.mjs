@@ -25,6 +25,6 @@ assert.match(migration, /finally \{[\s\S]*state\.migrationRunning = false/);
 assert.match(migration, /최적화할 기존 그림이 없습니다/);
 assert.match(migration, /모든 기존 그림의 최적화가 완료되었습니다/);
 assert.match(migration, /최적화 중 오류가 발생했습니다/);
-assert.match(app, /home-version[^\n]+v1\.2\.0/);
+assert.match(app, /home-version[^\n]+v1\.3\.0/);
 
 console.log("v1.1.1 static checks passed.");

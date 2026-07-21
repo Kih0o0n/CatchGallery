@@ -70,7 +70,7 @@ if (!chrome) {
 }
 
 const drawingColors = readArrayConstant("DRAWING_COLORS");
-assert.equal(drawingColors.length, 15, "browser fixture must use the real 15 drawing colors");
+assert.equal(drawingColors.length, 16, "browser fixture must use the real 16 drawing colors");
 const colorQuery = `colors=${encodeURIComponent(JSON.stringify(drawingColors))}`;
 const profile = mkdtempSync(join(tmpdir(), "catchgallery-responsive-"));
 let chromeProcess;
@@ -191,7 +191,7 @@ try {
   const narrowLandscape = results.find(result => result.viewport[0] === 568 && result.viewport[1] === 320);
   assert.ok(narrowLandscape, "568x320 must be part of the real Chrome viewport matrix");
   assert.equal(narrowLandscape.horizontalOverflow, false);
-  assert.equal(narrowLandscape.colorCount, 15);
+  assert.equal(narrowLandscape.colorCount, 16);
   assert.ok(narrowLandscape.eraserRect);
   assert.ok(narrowLandscape.paletteRect.right <= narrowLandscape.canvasRect.left);
   assert.ok(narrowLandscape.controlsRect.left >= narrowLandscape.canvasRect.right);

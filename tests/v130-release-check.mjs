@@ -7,12 +7,7 @@ const read = relativePath => fs.readFileSync(new URL(relativePath, rootUrl), "ut
 const app = read("app.js");
 const index = read("index.html");
 const readme = read("README.md");
-const securityCheck = read("tests/security-static-check.mjs");
 const releaseNotesUrl = new URL("RELEASE_NOTES_v1.3.0.md", rootUrl);
-
-assert.match(app, /home-version[^\n]+>v1\.3\.0<\/div>/, "home must display v1.3.0");
-assert.equal((app.match(/class="home-version"/g) || []).length, 1, "app must have one current-version display location");
-assert.match(securityCheck, /home-version[^\n]+v1\\\.3\\\.0/, "security check must expect v1.3.0");
 
 assert.match(readme, /^## v1\.3\.0\b/m, "README must contain a v1.3.0 section");
 assert.match(readme, /총 999개|최종 제시어 999개/, "README must state the final 999-word catalog");
@@ -49,4 +44,4 @@ for (const pwaFile of ["manifest.json", "manifest.webmanifest", "service-worker.
 }
 assert.doesNotMatch(index, /rel=["']manifest["']|serviceWorker\.register/i, "index must not introduce PWA registration");
 
-console.log("v1.3.0 release checks passed: version, documents, load order, and 403 + 596 = 999 catalog.");
+console.log("v1.3.0 historical release checks passed: documents, load order, and 403 + 596 = 999 catalog.");

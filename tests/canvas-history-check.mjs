@@ -16,7 +16,8 @@ function pick(name) {
 function fakeContext() {
   const calls = [];
   return {
-    calls, globalCompositeOperation: "source-over", strokeStyle: "#111", fillStyle: "#111", lineWidth: 9, lineCap: "", lineJoin: "",
+    calls, globalCompositeOperation: "source-over", globalAlpha: 1, strokeStyle: "#111", fillStyle: "#111", lineWidth: 9, lineCap: "", lineJoin: "",
+    save: () => calls.push(["save"]), restore: () => calls.push(["restore"]),
     clearRect: (...args) => calls.push(["clearRect", ...args]),
     drawImage: (...args) => calls.push(["drawImage", ...args]),
     beginPath: () => calls.push(["beginPath"]), moveTo: (...args) => calls.push(["moveTo", ...args]),
@@ -49,7 +50,11 @@ function fakeEventTarget() {
     emit(type, values = {}) { listeners.get(type)?.({ pointerId: 7, pointerType: "touch", buttons: 0, pressure: 0, cancelable: true, preventDefault() {}, ...values }); }
   };
 }
-const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "canvasPoint", "clampCanvasZoom", "clampCanvasTransform", "canvasTouchCenter", "canvasTouchDistance", "calculateCanvasGestureTransform", "sameCanvasPoint", "canvasContentAfterAction", "canvasHasVisibleContent", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded"];
+const actionNames = ["releaseCanvasHistory", "initializeCanvasHistory", "seededCanvasRandom", "drawStrokePath", "canvasPathMetrics", "pointAlongCanvasPath", "drawMetallicSparkle", "drawMetallicStroke", "applyCanvasAction", "compactCanvasHistory", "commitCanvasAction", "redrawCanvasFromHistory", "redrawCanvasWhenIdle", "flushPendingCanvasRedraw", "canvasPoint", "clampCanvasZoom", "clampCanvasTransform", "canvasTouchCenter", "canvasTouchDistance", "calculateCanvasGestureTransform", "sameCanvasPoint", "canvasContentAfterAction", "canvasHasVisibleContent", "safeSetPointerCapture", "safeReleasePointerCapture", "pointerMoveShowsContactEnded"];
+const METALLIC_BRUSHES = {
+  "glitter-gold": { base: "#d6a928", shadow: "#8f6814", highlight: "#fff3a1", sparkle: "#fffbe0" },
+  "glitter-silver": { base: "#aeb7c2", shadow: "#626c78", highlight: "#ffffff", sparkle: "#ffffff" }
+};
 function historyHarness() {
   const screenContext = fakeContext();
   const screen = fakeCanvas(screenContext);
@@ -57,7 +62,7 @@ function historyHarness() {
   const document = { createElement: () => { const canvas = fakeCanvas(); bases.push(canvas); return canvas; } };
   const state = { canvas: screen, ctx: screenContext, history: [], historyBaseCanvas: null, historyBaseContext: null, historyBaseReady: false, historyBaseHasContent: false, historyRedrawPending: false, activeStroke: null, canvasRect: null, brushInput: null, canvasInputCleanup: null, drawing: false, activePointerId: null, dirty: false };
   const code = actionNames.map(pick).join("\n");
-  const api = Function("state", "document", "DRAWING_HISTORY_LIMIT", `"use strict"; ${code}; return { ${actionNames.join(",")} };`)(state, document, 15);
+  const api = Function("state", "document", "DRAWING_HISTORY_LIMIT", "METALLIC_BRUSHES", `"use strict"; ${code}; return { ${actionNames.join(",")} };`)(state, document, 15, METALLIC_BRUSHES);
   api.initializeCanvasHistory(screen, true);
   return { state, screen, screenContext, base: bases[0], baseContext: bases[0].context, api };
 }
@@ -141,8 +146,8 @@ function setupHarness({ imageData = null, current = true, throwSetCapture = fals
   windowTarget.visualViewport = fakeEventTarget();
   windowTarget.requestAnimationFrame = callback => { frameCallback = callback; return 1; };
   windowTarget.cancelAnimationFrame = () => { frameCallback = null; };
-  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "clearCanvasTouchSession", "lockCanvasTouchSession", "eventTargetsCanvas", "scheduleCanvasTouchFallbackCleanup", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
-    state, document, windowTarget, 15, 1500, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, () => { touchSessionLocks++; lockRectReads = canvas.rectReads; }, (event, target) => target === canvas, () => { touchFallbackSchedules++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
+  const setupApi = Function("state", "document", "window", "DRAWING_HISTORY_LIMIT", "PEN_TOUCH_TAKEOVER_DELAY_MS", "METALLIC_BRUSHES", "bindDocumentDrawingScrollBlocker", "preventIfCancelable", "clearCanvasTouchSession", "lockCanvasTouchSession", "eventTargetsCanvas", "scheduleCanvasTouchFallbackCleanup", "Image", "routeTransitionId", "isTransitionCurrent", "console", `"use strict"; ${helperCode}; ${pick("setupCanvas")}; return { setupCanvas, releaseCanvasHistory, canvasHasVisibleContent };`)(
+    state, document, windowTarget, 15, 1500, METALLIC_BRUSHES, () => {}, event => event?.preventDefault?.(), () => { touchSessionClears++; }, () => { touchSessionLocks++; lockRectReads = canvas.rectReads; }, (event, target) => target === canvas, () => { touchFallbackSchedules++; }, TestImage, 1, () => current, { warn(...args) { warnings.push(args); } }
   );
   setupApi.setupCanvas(imageData);
   return { state, canvas, context, baseCanvas, baseContext, brush, window: windowTarget, document, api: setupApi, releaseCanvasHistory: setupApi.releaseCanvasHistory, image: () => image, warnings, flushFrame: () => { const callback = frameCallback; frameCallback = null; callback?.(); }, counts: () => ({ drawingQueries, brushQueries, touchSessionClears, touchSessionLocks, touchFallbackSchedules, lockRectReads }) };

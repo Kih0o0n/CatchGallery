@@ -11,14 +11,12 @@ const randomWordSource = app.match(/function wordKey[\s\S]*?(?=function resetDra
 assert.ok(colorExpression && drawingHelperSource && saveSource && modalSource && randomWordSource, "v1.2.0 sources must be readable");
 
 const colors = Function(`return (${colorExpression})`)();
-const existingColors = ["#3e3a48", "#ed5f72", "#f29b38", "#f0cf3a", "#57b879", "#45a8df", "#745bc7"];
-const addedColors = ["#f08fbd", "#8b5a3c", "#83d3f2", "#2f7d57", "#8b8f9c", "#f2c6a0", "#304a8a", "#b69de8"];
-assert.equal(colors.length, 15);
-assert.equal(new Set(colors.map(([value]) => value)).size, 15);
-for (const value of [...existingColors, ...addedColors]) assert.ok(colors.some(([candidate]) => candidate === value), value);
+const expectedColors = ["#ef4458", "#f064a6", "#f7b6cf", "#f28c28", "#f7b267", "#f4d43f", "#9bd64b", "#39a96b", "#72c9ed", "#3478d4", "#b49ae8", "#7952b3", "#3e3a48", "#8b5a3c", "#d6a928", "#aeb7c2"];
+assert.equal(colors.length, 16);
+assert.equal(new Set(colors.map(([value]) => value)).size, 16);
+assert.deepEqual(colors.map(([value]) => value), expectedColors);
 assert.ok(colors.every(([, name]) => typeof name === "string" && name.length > 0));
-assert.match(app, /aria-label="\$\{name\} 색연필"/);
-assert.match(app, /title="\$\{name\} 색연필"/);
+assert.match(app, /const label = `\$\{name\} \$\{special \? "특수 브러시" : "색연필"\}`/);
 
 function drawingHelpers(state, overrides = {}) {
   const dependencies = {
@@ -109,6 +107,7 @@ function classList(initial = []) {
   assert.equal(next.classList.contains("selected"), true);
   assert.equal(state.ctx.globalCompositeOperation, "source-over");
   assert.equal(state.ctx.strokeStyle, "#83d3f2");
+  assert.equal(state.currentBrushKind, "solid");
   assert.equal(eraser.classList.contains("active"), false);
   assert.equal(eraser.attributes["aria-pressed"], "false");
   assert.equal(first.attributes["aria-pressed"], "false");

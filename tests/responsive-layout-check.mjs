@@ -25,7 +25,7 @@ function readArrayConstant(name) {
 }
 
 const drawingColors = readArrayConstant("DRAWING_COLORS");
-assert.equal(drawingColors.length, 15, "the real app must expose all 15 drawing colors");
+assert.equal(drawingColors.length, 16, "the real app must expose all 16 drawing colors");
 
 function pick(name) {
   const start = app.indexOf(`function ${name}(`);
@@ -76,8 +76,8 @@ function classList(initial = []) {
     querySelectorAll: selector => selector === ".color" ? colors : [],
     querySelector: selector => selector === ".draw-screen" ? drawScreen : selector === "#eraser" ? eraser : null
   };
-  const names = ["state", "randomWord", "escapeHtml", "DRAWING_COLORS", "appEl", "setupCanvas", "document", "selectDrawingColor", "eraser", "undo", "clearCanvas", "nextWord", "customWordButton", "customWordForm", "customCategory", "customWord", "customAnswers", "answerHelpButton", "answerHelp", "saveDrawing", "undoCanvas", "openClearCanvasModal", "confirm", "isValidCategory", "textLength", "normalizeAnswer", "showToast", "saveDrawingDraft"];
-  const values = [state, () => {}, value => String(value), drawingColors, appEl, () => {}, document, () => {}, eraser, undo, clearCanvas, nextWord, customWordButton, customWordForm, customCategory, customWord, customAnswers, answerHelpButton, answerHelp, saveDrawing, () => {}, () => {}, () => true, () => true, value => String(value).length, value => String(value), () => {}, () => {}];
+  const names = ["state", "randomWord", "escapeHtml", "DRAWING_COLORS", "DEFAULT_DRAWING_COLOR_INDEX", "appEl", "setupCanvas", "document", "selectDrawingColor", "eraser", "undo", "clearCanvas", "nextWord", "customWordButton", "customWordForm", "customCategory", "customWord", "customAnswers", "answerHelpButton", "answerHelp", "saveDrawing", "undoCanvas", "openClearCanvasModal", "confirm", "isValidCategory", "textLength", "normalizeAnswer", "showToast", "saveDrawingDraft"];
+  const values = [state, () => {}, value => String(value), drawingColors, 12, appEl, () => {}, document, () => {}, eraser, undo, clearCanvas, nextWord, customWordButton, customWordForm, customCategory, customWord, customAnswers, answerHelpButton, answerHelp, saveDrawing, () => {}, () => {}, () => true, () => true, value => String(value).length, value => String(value), () => {}, () => {}];
   const renderDraw = Function(...names, `"use strict"; ${pick("renderDraw")}; return renderDraw;`)(...values);
   renderDraw();
 
@@ -96,6 +96,7 @@ function classList(initial = []) {
   assert.equal(typeof saveDrawing.onclick, "function");
   eraser.onclick();
   assert.equal(state.ctx.globalCompositeOperation, "destination-out");
+  assert.equal(state.currentBrushKind, "eraser");
   assert.equal(eraser.classList.contains("active"), true);
   assert.equal(eraser.attributes["aria-pressed"], "true");
   customWordButton.onclick();

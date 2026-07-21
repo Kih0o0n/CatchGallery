@@ -252,11 +252,18 @@ const STALE_PROVISIONAL_GRACE_MS = 15 * 60 * 1000;
 const DRAWING_HISTORY_LIMIT = 15;
 const PEN_TOUCH_TAKEOVER_DELAY_MS = 1500;
 const DRAWING_COLORS = [
-  ["#3e3a48", "검정색"], ["#ed5f72", "빨간색"], ["#f29b38", "주황색"], ["#f0cf3a", "노란색"],
-  ["#57b879", "초록색"], ["#45a8df", "파란색"], ["#745bc7", "보라색"], ["#f08fbd", "분홍색"],
-  ["#8b5a3c", "갈색"], ["#83d3f2", "하늘색"], ["#2f7d57", "진한 초록색"], ["#8b8f9c", "회색"],
-  ["#f2c6a0", "베이지색·살구색"], ["#304a8a", "남색"], ["#b69de8", "연보라색"]
+  ["#ef4458", "빨강", "solid"], ["#f064a6", "분홍", "solid"], ["#f7b6cf", "연분홍", "solid"],
+  ["#f28c28", "주황", "solid"], ["#f7b267", "연주황", "solid"], ["#f4d43f", "노랑", "solid"],
+  ["#9bd64b", "연두", "solid"], ["#39a96b", "초록", "solid"], ["#72c9ed", "하늘", "solid"],
+  ["#3478d4", "파랑", "solid"], ["#b49ae8", "연보라", "solid"], ["#7952b3", "보라", "solid"],
+  ["#3e3a48", "검정", "solid"], ["#8b5a3c", "갈색", "solid"],
+  ["#d6a928", "금색", "glitter-gold"], ["#aeb7c2", "은색", "glitter-silver"]
 ];
+const DEFAULT_DRAWING_COLOR_INDEX = 12;
+const METALLIC_BRUSHES = {
+  "glitter-gold": { base: "#d6a928", shadow: "#8f6814", highlight: "#fff3a1", sparkle: "#fffbe0" },
+  "glitter-silver": { base: "#aeb7c2", shadow: "#626c78", highlight: "#ffffff", sparkle: "#ffffff" }
+};
 
 const appEl = document.querySelector("#app");
 const headerEl = document.querySelector("#appHeader");
@@ -347,6 +354,8 @@ const state = {
   activeStroke: null,
   canvasRect: null,
   brushInput: null,
+  currentBrushKind: "solid",
+  strokeSeedCounter: 0,
   canvasInputCleanup: null,
   canvasZoomScale: 1,
   canvasZoomX: 0,
@@ -523,6 +532,7 @@ function selectDrawingColor(button, buttons = document.querySelectorAll(".color"
   eraserButton?.setAttribute("aria-pressed", "false");
   state.ctx.globalCompositeOperation = "source-over";
   state.ctx.strokeStyle = button.dataset.color;
+  state.currentBrushKind = button.dataset.brush || "solid";
 }
 function normalizeAnswer(value) { return String(value || "").trim().normalize("NFC").replace(/\s+/g, "").toLowerCase(); }
 function textLength(value) { return Array.from(value).length; }
@@ -1106,11 +1116,12 @@ function renderDraw() {
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name], i) => `<button class="color ${i === 0 ? "selected" : ""}" data-color="${value}" style="background:${value}" aria-label="${name} 색연필" title="${name} 색연필" aria-pressed="${i === 0 ? "true" : "false"}"></button>`).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name, brush], i) => { const special = brush !== "solid"; const label = `${name} ${special ? "특수 브러시" : "색연필"}`; return `<button class="color ${special ? "metallic-color " : ""}${i === DEFAULT_DRAWING_COLOR_INDEX ? "selected" : ""}" data-color="${value}" data-brush="${brush}" style="--swatch-color:${value}" aria-label="${label}" title="${label}" aria-pressed="${i === DEFAULT_DRAWING_COLOR_INDEX ? "true" : "false"}"></button>`; }).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
   eraser.onclick = () => {
     state.ctx.globalCompositeOperation = "destination-out";
+    state.currentBrushKind = "eraser";
     document.querySelectorAll(".color").forEach(button => { button.classList.remove("selected"); button.setAttribute("aria-pressed", "false"); });
     eraser.classList.add("active");
     eraser.setAttribute("aria-pressed", "true");
@@ -1360,6 +1371,8 @@ function releaseCanvasHistory() {
   state.activeStroke = null;
   state.canvasRect = null;
   state.brushInput = null;
+  state.currentBrushKind = "solid";
+  state.strokeSeedCounter = 0;
   state.drawing = false;
   state.activePointerId = null;
   state.activePointerType = null;
@@ -1383,6 +1396,102 @@ function initializeCanvasHistory(canvas, baseReady = true) {
   state.historyBaseReady = baseReady;
   state.historyBaseHasContent = false;
 }
+function seededCanvasRandom(seed) {
+  let value = (Number(seed) >>> 0) || 0x6d2b79f5;
+  return () => {
+    value += 0x6d2b79f5;
+    let mixed = value;
+    mixed = Math.imul(mixed ^ mixed >>> 15, mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ mixed >>> 7, mixed | 61);
+    return ((mixed ^ mixed >>> 14) >>> 0) / 4294967296;
+  };
+}
+function drawStrokePath(context, points, width, color) {
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = Math.max(1, width);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  if (points.length === 1) {
+    context.arc(points[0].x, points[0].y, Math.max(0.5, width / 2), 0, Math.PI * 2);
+    context.fill();
+  } else {
+    context.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) context.lineTo(point.x, point.y);
+    context.stroke();
+  }
+  context.closePath();
+}
+function canvasPathMetrics(points) {
+  const segments = [];
+  let total = 0;
+  for (let index = 1; index < points.length; index++) {
+    const from = points[index - 1];
+    const to = points[index];
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    if (!(length > 0)) continue;
+    segments.push({ from, to, start: total, length });
+    total += length;
+  }
+  return { segments, total };
+}
+function pointAlongCanvasPath(metrics, distance, fallback) {
+  if (!metrics.segments.length) return { x: fallback.x, y: fallback.y, nx: 0, ny: -1 };
+  const safeDistance = Math.min(metrics.total, Math.max(0, distance));
+  const segment = metrics.segments.find(item => safeDistance <= item.start + item.length) || metrics.segments[metrics.segments.length - 1];
+  const ratio = Math.min(1, Math.max(0, (safeDistance - segment.start) / segment.length));
+  const dx = segment.to.x - segment.from.x;
+  const dy = segment.to.y - segment.from.y;
+  return { x: segment.from.x + dx * ratio, y: segment.from.y + dy * ratio, nx: -dy / segment.length, ny: dx / segment.length };
+}
+function drawMetallicSparkle(context, point, radius, color, star) {
+  context.fillStyle = color;
+  context.beginPath();
+  if (star) {
+    context.moveTo(point.x, point.y - radius * 1.8);
+    context.lineTo(point.x + radius * 0.42, point.y - radius * 0.42);
+    context.lineTo(point.x + radius * 1.8, point.y);
+    context.lineTo(point.x + radius * 0.42, point.y + radius * 0.42);
+    context.lineTo(point.x, point.y + radius * 1.8);
+    context.lineTo(point.x - radius * 0.42, point.y + radius * 0.42);
+    context.lineTo(point.x - radius * 1.8, point.y);
+    context.lineTo(point.x - radius * 0.42, point.y - radius * 0.42);
+    context.closePath();
+  } else {
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  }
+  context.fill();
+}
+function drawMetallicStroke(context, action, options) {
+  const sparkles = options?.sparkles !== false;
+  const style = METALLIC_BRUSHES[action.brushKind];
+  if (!style) return false;
+  const points = action.points;
+  const width = Math.max(3, Number(action.width) || 9);
+  context.save();
+  context.globalCompositeOperation = action.compositeOperation || "source-over";
+  context.globalAlpha = 1;
+  drawStrokePath(context, points, width, style.shadow);
+  drawStrokePath(context, points, width * 0.82, style.base);
+  context.globalAlpha = 0.82;
+  drawStrokePath(context, points, Math.max(1.2, width * 0.27), style.highlight);
+  if (sparkles) {
+    const random = seededCanvasRandom(action.seed);
+    const metrics = canvasPathMetrics(points);
+    const count = Math.min(48, Math.max(1, Math.floor(metrics.total / Math.max(20, width * 1.45)) + 1));
+    context.globalAlpha = 0.96;
+    for (let index = 0; index < count; index++) {
+      const distance = count === 1 ? metrics.total * 0.5 : metrics.total * (index + 0.35 + random() * 0.3) / count;
+      const location = pointAlongCanvasPath(metrics, distance, points[0]);
+      const offset = (random() - 0.5) * width * 0.7;
+      const radius = Math.min(3.2, Math.max(1.15, width * (0.09 + random() * 0.06)));
+      drawMetallicSparkle(context, { x: location.x + location.nx * offset, y: location.y + location.ny * offset }, radius, style.sparkle, index % 4 === 0);
+    }
+  }
+  context.restore();
+  return true;
+}
 function applyCanvasAction(context, action) {
   if (!context || !action) return;
   if (action.type === "clear") {
@@ -1391,6 +1500,7 @@ function applyCanvasAction(context, action) {
     return;
   }
   if (action.type !== "stroke" || !Array.isArray(action.points) || action.points.length < 1) return;
+  if (drawMetallicStroke(context, action)) return;
   context.globalCompositeOperation = action.compositeOperation;
   context.strokeStyle = action.color;
   context.fillStyle = action.color;
@@ -1549,6 +1659,8 @@ function setupCanvas(imageData) {
   state.ctx.globalCompositeOperation = "source-over";
   state.ctx.strokeStyle = "#3e3a48";
   state.ctx.lineWidth = 9;
+  state.currentBrushKind = "solid";
+  state.strokeSeedCounter = 0;
   initializeCanvasHistory(state.canvas, !imageData);
   state.brushInput = document.querySelector("#brushSize");
   state.dirty = false;
@@ -1600,11 +1712,14 @@ function setupCanvas(imageData) {
     const stroke = state.activeStroke;
     clearActivePointer();
     context.closePath();
+    let committed = false;
     if (commit && (stroke.points.length > 1 || commitDot)) {
       if (stroke.points.length === 1) applyCanvasAction(context, stroke);
-      if (commitCanvasAction(stroke)) state.dirty = true;
+      committed = commitCanvasAction(stroke);
+      if (committed) state.dirty = true;
     }
-    flushPendingCanvasRedraw();
+    if (committed && METALLIC_BRUSHES[stroke.brushKind]) redrawCanvasFromHistory();
+    else flushPendingCanvasRedraw();
     if (releaseCapture) safeReleasePointerCapture(canvas, pointerId);
     return true;
   };
@@ -1701,6 +1816,8 @@ function setupCanvas(imageData) {
       type: "stroke",
       compositeOperation: context.globalCompositeOperation,
       color: context.strokeStyle || "#3e3a48",
+      brushKind: state.currentBrushKind === "eraser" ? "solid" : state.currentBrushKind,
+      seed: (Math.imul(++state.strokeSeedCounter, 0x9e3779b1) ^ Math.round(point.x * 100) ^ Math.imul(Math.round(point.y * 100), 31)) >>> 0,
       width: Number(state.brushInput?.value || 9),
       points: [point]
     };
@@ -1736,11 +1853,15 @@ function setupCanvas(imageData) {
     const lastPoint = state.activeStroke.points[state.activeStroke.points.length - 1];
     if (sameCanvasPoint(lastPoint, point)) return;
     state.activeStroke.points.push(point);
-    context.globalCompositeOperation = state.activeStroke.compositeOperation;
-    context.strokeStyle = state.activeStroke.color;
-    context.lineWidth = state.activeStroke.width;
-    context.lineTo(point.x, point.y);
-    context.stroke();
+    if (METALLIC_BRUSHES[state.activeStroke.brushKind]) {
+      drawMetallicStroke(context, { ...state.activeStroke, points: [lastPoint, point] }, { sparkles: false });
+    } else {
+      context.globalCompositeOperation = state.activeStroke.compositeOperation;
+      context.strokeStyle = state.activeStroke.color;
+      context.lineWidth = state.activeStroke.width;
+      context.lineTo(point.x, point.y);
+      context.stroke();
+    }
     state.dirty = true;
   };
   const end = event => {

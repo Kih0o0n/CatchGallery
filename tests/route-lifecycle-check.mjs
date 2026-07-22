@@ -194,7 +194,8 @@ function galleryHarness() {
   const pushed = [];
   const history = { state: { route: "gallery", galleryDetail: true, preserved: "yes" }, replaceState: (...args) => replaced.push(args), pushState: (...args) => pushed.push(args) };
   const renders = [];
-  const moveGalleryIndex = Function("state", "history", "renderGalleryContent", `${moveGallerySource}; return moveGalleryIndex;`)(state, history, list => renders.push(list));
+  const galleryHistoryState = () => ({ ...(history.state || {}), route: "gallery", galleryDetail: true, galleryIndex: state.galleryIndex });
+  const moveGalleryIndex = Function("state", "history", "renderGalleryContent", "galleryHistoryState", `${moveGallerySource}; return moveGalleryIndex;`)(state, history, list => renders.push(list), galleryHistoryState);
   const list = [{}, {}, {}];
   moveGalleryIndex(1, list);
   assert.equal(state.galleryIndex, 2);

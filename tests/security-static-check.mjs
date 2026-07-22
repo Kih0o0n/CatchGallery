@@ -5,6 +5,8 @@ const app = fs.readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const rulesText = fs.readFileSync(new URL("../database.rules.json", import.meta.url), "utf8");
 const rules = JSON.parse(rulesText).rules;
+const transitionSource = app.match(/function transitionRoute[\s\S]*?(?=function route\()/)?.[0];
+assert.ok(transitionSource);
 
 assert.doesNotMatch(rulesText, /\.numChildren\s*\(/, "Realtime Database Rules must not use unsupported numChildren()");
 const supportedRuleMethods = new Set(["child", "exists", "hasChild", "hasChildren", "isBoolean", "isNumber", "isString", "matches", "parent", "val"]);
@@ -23,7 +25,7 @@ assert.match(app, /successCount >= 10 \? 0 : successCount >= 5 \? 5 : 10/, "solv
 assert.match(app, /claim\.type === "solver"[^\n]+now - 3600000/, "recent solver successes must use a rolling hour");
 assert.match(app, /const drawerReward = 30/, "drawer solve reward must be 30");
 assert.match(app, /function isOwnDrawing\(d\)/, "drawing ownership checks must be shared");
-assert.match(app, /if \(name === "gallery"\)[\s\S]{0,220}state\.galleryView = detail \? "frame" : "thumb"/, "gallery entry must reset to thumbnails while preserving history detail state");
+assert.match(transitionSource, /if \(name === "gallery"\)[\s\S]*state\.galleryView = detail \? "frame" : "thumb"/, "gallery entry must reset to thumbnails while preserving history detail state");
 assert.match(styles, /\.gallery-screen \.frame-image[^}]+height:\s*min\(42dvh, 420px\)/, "gallery frame image must fit mobile height");
 assert.match(app, /function showAnswerSuccessModal\(result\)/, "answer success modal must exist");
 assert.match(app, /정답입니다 🎉/, "answer success modal must show its title");
@@ -41,7 +43,10 @@ assert.match(rules.drawings.$id[".write"], /adminDeleted/);
 assert.match(rules.drawings.$id.status[".validate"], /adminDeleted/);
 assert.doesNotMatch(app, /썸네일 보기|액자 보기/);
 assert.match(styles, /grid-template-columns:\s*repeat\(3,/);
-assert.match(app, /galleryDetail:\s*true/);
+assert.match(
+  app,
+  /function galleryHistoryState\(detail[\s\S]*galleryDetail:\s*detail/,
+);
 assert.match(app, /slice\(0,\s*30\)/, "ranking must remain limited to 30 users");
 assert.doesNotMatch(app, /예: 기훈/);
 assert.match(app, /평소 쓰는 비밀번호를 사용하지 마세요\./);

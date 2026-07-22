@@ -2768,10 +2768,21 @@ function invalidateDrawingCachesAfterAdminDelete(drawingId, status) {
   state.likeCache.delete(drawingId);
   state.pendingLikes.delete(drawingId);
 }
+function likeAccessibilityLabel(value, own = false) {
+  const count = Math.max(0, Number(value?.count) || 0);
+  if (own) return `좋아요 ${count}개 · 내 그림에는 좋아요를 누를 수 없음`;
+  return value?.liked ? `좋아요 취소, 현재 ${count}개` : `좋아요, 현재 ${count}개`;
+}
+function updateLikeButtonAccessibility(button, value) {
+  if (button.matches("[data-answer-success-like]") && ["loading", "retry", "saving"].includes(button.dataset.likeState)) return;
+  button.setAttribute("aria-label", likeAccessibilityLabel(value, button.dataset.ownLike === "true"));
+}
 function galleryFrame(list, i) {
   const d = list[i];
   const statusBadge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : "";
-  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot">${statusBadge}<img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div>${galleryArtistButton(d, false)}<button class="button like-button ${isOwnDrawing(d) ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${isOwnDrawing(d) ? " · 내 그림" : ""}</button></div>`;
+  const own = isOwnDrawing(d);
+  const likeValue = { liked: !!d.isLiked, count: Number(d.likeCount) || 0 };
+  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot">${statusBadge}<img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div>${galleryArtistButton(d, false)}<button class="button like-button ${own ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-label="${likeAccessibilityLabel(likeValue, own)}" aria-pressed="${d.isLiked ? "true" : "false"}" ${own ? 'data-own-like="true" disabled' : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${own ? " · 내 그림" : ""}</button></div>`;
 }
 function galleryArtistButton(drawing, compact = false) {
   if (state.galleryArtistDrawingId || !galleryArtistIdentity(drawing)) return "";
@@ -2781,7 +2792,7 @@ function galleryArtistButton(drawing, compact = false) {
   return `<button class="gallery-artist-button${compact ? " compact-artist-button" : ""}" data-artist-drawing="${drawing.id}" aria-label="${label}"><span aria-hidden="true">👤</span><span class="artist-button-name">${visibleName}${isOwnDrawing(drawing) ? "" : "님"}</span><span class="artist-button-action">작품 보기 〉</span></button>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => { const badge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : ""; return `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot">${badge}<img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="좋아요" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${galleryArtistButton(d, true)}${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`; }).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => { const badge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : ""; const own = isOwnDrawing(d); const likeValue = { liked: !!d.isLiked, count: Number(d.likeCount) || 0 }; return `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot">${badge}<img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="${likeAccessibilityLabel(likeValue, own)}" aria-pressed="${d.isLiked ? "true" : "false"}" ${own ? 'data-own-like="true" disabled' : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${galleryArtistButton(d, true)}${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`; }).join("")}</div>`;
 }
 function renderGalleryContent(list = state.galleryLists[galleryListKey()] || []) {
   const content = document.querySelector("#galleryContent");
@@ -2933,9 +2944,16 @@ function syncGalleryLike(id) {
   document.querySelectorAll(`[data-like="${id}"]`).forEach(button => {
     button.classList.toggle("is-liked", value.liked);
     button.setAttribute("aria-pressed", String(value.liked));
-    button.setAttribute("aria-label", value.liked ? "좋아요 취소" : "좋아요");
+    updateLikeButtonAccessibility(button, value);
     const heart = button.querySelector(".heart"); if (heart) heart.textContent = value.liked ? "♥" : "♡";
     const count = button.querySelector("[data-like-count]"); if (count) count.textContent = value.count;
+  });
+}
+function syncAnswerSuccessLikeAvailability(id) {
+  if (!isSafeRecordId(id) || !state.likeCache.has(id)) return;
+  document.querySelectorAll(`[data-answer-success-like="${id}"]`).forEach(button => {
+    if (!button.isConnected || !["ready", "saving"].includes(button.dataset.likeState)) return;
+    button.disabled = state.pendingLikes.has(id);
   });
 }
 async function loadGalleryDetail(drawing, list) {
@@ -3721,14 +3739,14 @@ function showAnswerSuccessModal(result) {
   const likeDrawing = result.likeDrawing;
   const canLike = !!drawingId && !!likeDrawing && !isOwnDrawing(likeDrawing);
   const likeHtml = canLike
-    ? `<div class="answer-success-like"><p>마음에 쏙 든 그림이라면 좋아요를 눌러주세요!</p><button class="button secondary full answer-success-like-button" data-like="${drawingId}" aria-label="좋아요 상태 불러오는 중" aria-pressed="false" disabled><span class="heart" aria-hidden="true">♡</span> 좋아요 <span data-like-count>…</span></button><div class="answer-success-like-status" data-success-like-status aria-live="polite">좋아요를 불러오는 중…</div></div>`
+    ? `<div class="answer-success-like"><p>마음에 쏙 든 그림이라면 좋아요를 눌러주세요!</p><button class="button secondary full answer-success-like-button" data-like="${drawingId}" data-answer-success-like="${drawingId}" data-like-state="loading" aria-label="좋아요 상태 불러오는 중" aria-pressed="false" disabled><span class="heart" aria-hidden="true">♡</span> 좋아요 <span data-like-count>…</span></button><div class="answer-success-like-status" data-success-like-status aria-live="polite">좋아요를 불러오는 중…</div></div>`
     : "";
   root.innerHTML = `<div class="modal-backdrop answer-success-backdrop"><div class="modal answer-success-modal" role="dialog" aria-modal="true" aria-labelledby="answerSuccessTitle"><div class="success-sparkles" aria-hidden="true">✨ 🎉 ✨</div><h3 id="answerSuccessTitle">정답입니다 🎉</h3><p class="success-drawer">이 그림은 <b>${escapeHtml(result.drawerNickname || "알 수 없는 친구")}</b>님이 그렸어요!</p><p class="success-score">${scoreMessage}</p><p class="success-reward">그린 사람에게도 +30점이 들어갔어요!</p>${likeHtml}<button class="button primary full" data-success-close>계속 둘러보기</button></div></div>`;
   const backdrop = root.firstElementChild;
   const userId = state.user?.id;
   const generation = state.cacheGeneration;
   const ownsModal = () => root.firstElementChild === backdrop && backdrop?.isConnected !== false;
-  const ownsRequest = () => ownsModal() && isCacheSessionCurrent(userId, generation);
+  const sessionIsCurrent = () => isCacheSessionCurrent(userId, generation);
   let observer = null;
   const cleanup = (clear = false) => {
     document.removeEventListener("keydown", onKeydown);
@@ -3753,19 +3771,25 @@ function showAnswerSuccessModal(result) {
   const status = root.querySelector("[data-success-like-status]");
   let loadingLike = false;
   const loadLike = async () => {
-    if (loadingLike || !ownsRequest()) return;
+    if (loadingLike || !ownsModal() || !sessionIsCurrent()) return;
     loadingLike = true;
+    likeButton.dataset.likeState = "loading";
     likeButton.disabled = true;
+    likeButton.setAttribute("aria-label", "좋아요 상태 불러오는 중");
     status.textContent = "좋아요를 불러오는 중…";
     try {
       await ensureLikeState(drawingId);
-      if (!ownsRequest()) return;
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
       syncGalleryLike(drawingId);
-      likeButton.setAttribute("aria-label", state.likeCache.get(drawingId)?.liked ? "좋아요 취소" : "좋아요");
+      syncAnswerSuccessLikeAvailability(drawingId);
+      if (!ownsModal()) return;
       status.textContent = "";
-      likeButton.disabled = state.pendingLikes.has(drawingId);
     } catch (_) {
-      if (!ownsRequest()) return;
+      if (!sessionIsCurrent() || !ownsModal()) return;
+      likeButton.dataset.likeState = "retry";
+      likeButton.disabled = true;
+      likeButton.setAttribute("aria-label", "좋아요 상태를 불러오지 못함");
       status.innerHTML = '좋아요를 불러오지 못했어요. <button type="button" class="answer-success-like-retry" data-success-like-retry>다시 불러오기</button>';
       status.querySelector("[data-success-like-retry]").onclick = loadLike;
     } finally {
@@ -3774,24 +3798,33 @@ function showAnswerSuccessModal(result) {
   };
   likeButton.onclick = async event => {
     event.stopPropagation();
-    if (likeButton.disabled || state.pendingLikes.has(drawingId) || !ownsRequest()) return;
+    if (likeButton.disabled || state.pendingLikes.has(drawingId) || !ownsModal() || !sessionIsCurrent()) return;
     state.pendingLikes.add(drawingId);
+    likeButton.dataset.likeState = "saving";
     likeButton.disabled = true;
     status.textContent = "좋아요를 저장하는 중…";
     try {
       await ensureLikeState(drawingId);
+      if (!sessionIsCurrent()) return;
       await toggleLike(drawingId, likeDrawing);
-      if (!ownsRequest()) return;
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
       syncGalleryLike(drawingId);
-      likeButton.setAttribute("aria-label", state.likeCache.get(drawingId)?.liked ? "좋아요 취소" : "좋아요");
+      if (!ownsModal()) return;
       status.textContent = "";
-    } catch (error) {
-      if (!ownsRequest()) return;
+    } catch (_) {
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
       syncGalleryLike(drawingId);
-      status.textContent = userErrorMessage(error, "좋아요를 바꾸지 못했어요. 다시 시도해 주세요.");
+      if (!ownsModal()) return;
+      status.textContent = "좋아요를 바꾸지 못했어요. 다시 시도해 주세요.";
     } finally {
       state.pendingLikes.delete(drawingId);
-      if (ownsRequest()) likeButton.disabled = false;
+      if (sessionIsCurrent()) {
+        if (ownsModal() && likeButton.dataset.likeState === "saving") likeButton.dataset.likeState = "ready";
+        syncGalleryLike(drawingId);
+        syncAnswerSuccessLikeAvailability(drawingId);
+      }
     }
   };
   loadLike();

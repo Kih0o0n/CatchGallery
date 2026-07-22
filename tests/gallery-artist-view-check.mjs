@@ -65,7 +65,7 @@ assert.deepEqual(helpers.sortGalleryDrawings(times, "popular").map(item => item.
   const escapeHtml = value => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const escapeAttribute = value => escapeHtml(value).replace(/"/g, "&quot;");
   const isOwnDrawing = drawing => drawingOwnerId(drawing) === renderState.user.id;
-  const source = [...helperNames.slice(0, 4).map(pick), pick("galleryArtistButton"), pick("galleryThumbs"), pick("galleryFrame")].join("\n");
+  const source = [...helperNames.slice(0, 4).map(pick), pick("likeAccessibilityLabel"), pick("galleryArtistButton"), pick("galleryThumbs"), pick("galleryFrame")].join("\n");
   const api = Function("state", "drawerName", "drawingOwnerId", "isSafeRecordId", "escapeHtml", "escapeAttribute", "isOwnDrawing", "solverName", `"use strict"; ${source}; return { galleryArtistButton, galleryThumbs, galleryFrame };`)(renderState, drawerName, drawingOwnerId, isSafeRecordId, escapeHtml, escapeAttribute, isOwnDrawing, () => "맞힌이");
   const mine = { ...selected, id: "mine-drawing", drawerId: "mine", drawerNickname: "내닉네임" };
   const unsafeName = { ...selected, id: "safe-drawing", drawerNickname: '<img src=x onerror="bad">' };

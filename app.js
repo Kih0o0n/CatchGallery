@@ -309,6 +309,7 @@ const state = {
   galleryIndex: 0,
   galleryArtistDrawingId: null,
   galleryArtist: null,
+  galleryHasGalleryBack: false,
   galleryLists: {},
   galleryMetadata: {},
   galleryMetadataPromises: {},
@@ -465,6 +466,7 @@ function resetUserSessionCaches() {
   state.galleryScroll = {};
   state.galleryArtistDrawingId = null;
   state.galleryArtist = null;
+  state.galleryHasGalleryBack = false;
   state.pendingLikes.clear();
   state.manageDrawings = null;
   state.hintUsed = {};
@@ -699,14 +701,20 @@ function transitionRoute(name, { historyMode = "push", historyState = null, rend
     state.rankingSnapshotPromise = null;
   }
   routeTransitionId++;
+  const nextHistoryState = historyState || (name === "gallery" ? fullGalleryHistoryState(false) : { route: name, galleryDetail: false });
   if (name === "gallery") {
-    const artistDrawingId = historyState?.galleryArtist === true && isSafeRecordId(historyState?.galleryArtistDrawingId) ? historyState.galleryArtistDrawingId : null;
-    if (state.galleryArtistDrawingId !== artistDrawingId) state.galleryArtist = null;
+    const artistDrawingId = nextHistoryState.galleryArtist === true && isSafeRecordId(nextHistoryState.galleryArtistDrawingId) ? nextHistoryState.galleryArtistDrawingId : null;
+    if (state.galleryArtistDrawingId !== artistDrawingId) {
+      state.galleryArtist = null;
+      state.galleryHasGalleryBack = false;
+    }
+    if (!artistDrawingId) state.galleryHasGalleryBack = false;
     state.galleryArtistDrawingId = artistDrawingId;
-    if (["new", "old", "popular"].includes(historyState?.gallerySort)) state.gallerySort = historyState.gallerySort;
-    const detail = historyState?.galleryDetail === true;
+    if (["solved", "expired"].includes(nextHistoryState.galleryTab)) state.galleryTab = nextHistoryState.galleryTab;
+    if (["new", "old", "popular"].includes(nextHistoryState.gallerySort)) state.gallerySort = nextHistoryState.gallerySort;
+    const detail = nextHistoryState.galleryDetail === true;
     state.galleryView = detail ? "frame" : "thumb";
-    if (detail && Number.isInteger(historyState?.galleryIndex)) state.galleryIndex = historyState.galleryIndex;
+    if (detail && Number.isInteger(nextHistoryState.galleryIndex)) state.galleryIndex = nextHistoryState.galleryIndex;
     else if (previousRoute !== "gallery") state.galleryIndex = 0;
   }
   if (name === "draw" && previousRoute !== "draw") {
@@ -715,7 +723,6 @@ function transitionRoute(name, { historyMode = "push", historyState = null, rend
   }
   state.route = name;
   if (name !== "draw") state.editDrawing = null;
-  const nextHistoryState = historyState || { route: name, galleryDetail: false };
   if (historyMode === "push") history.pushState(nextHistoryState, "", `#${name}`);
   else if (historyMode === "replace") history.replaceState(nextHistoryState, "", `#${name}`);
   renderRoute(renderOptions, routeTransitionId);
@@ -724,14 +731,15 @@ function route(name, options = {}) { transitionRoute(name, { renderOptions: opti
 
 window.addEventListener("popstate", event => {
   const name = location.hash.slice(1) || (state.user ? "home" : "login");
-  transitionRoute(name, { historyMode: "pop", historyState: event.state || { route: name, galleryDetail: false } });
+  transitionRoute(name, { historyMode: "pop", historyState: event.state || null });
 });
 document.addEventListener("click", e => {
   const target = e.target.closest("[data-route]");
   if (target) route(target.dataset.route);
 });
 document.querySelector("#backButton").addEventListener("click", () => {
-  if (state.route === "gallery" && state.galleryArtistDrawingId) returnFromArtistGallery();
+  if (state.route === "gallery" && state.galleryArtistDrawingId && state.galleryView === "frame") returnFromArtistDetail();
+  else if (state.route === "gallery" && state.galleryArtistDrawingId) returnFromArtistGallery();
   else if (state.route === "gallery" && state.galleryView === "frame") history.back();
   else route("home");
 });
@@ -2614,44 +2622,88 @@ async function loadGalleryArtistDrawings(sort = state.gallerySort) {
   return sortGalleryDrawings(list, sort);
 }
 function galleryListKey() { return state.galleryArtistDrawingId ? `artist:${state.galleryArtistDrawingId}:${state.gallerySort}` : `${state.galleryTab}:${state.gallerySort}`; }
-function galleryHistoryState(detail = state.galleryView === "frame") {
+function fullGalleryHistoryState(detail = state.galleryView === "frame") {
   return {
-    ...(history.state || {}),
     route: "gallery",
+    galleryTab: ["solved", "expired"].includes(state.galleryTab) ? state.galleryTab : "solved",
+    gallerySort: ["new", "old", "popular"].includes(state.gallerySort) ? state.gallerySort : "new",
     galleryDetail: detail,
     galleryIndex: detail ? state.galleryIndex : 0,
-    gallerySort: state.gallerySort,
-    ...(state.galleryArtistDrawingId
-      ? { galleryArtist: true, galleryArtistDrawingId: state.galleryArtistDrawingId, galleryHasGalleryBack: true }
-      : { galleryArtist: false, galleryArtistDrawingId: null, galleryHasGalleryBack: false })
+    galleryArtist: false,
+    galleryArtistDrawingId: null,
+    galleryHasGalleryBack: false,
+    galleryHasArtistListBack: false,
+    galleryReturnState: null
+  };
+}
+function validGalleryReturnState(value) {
+  if (!value || value.route !== "gallery" || value.galleryArtist === true) return null;
+  const galleryTab = ["solved", "expired"].includes(value.galleryTab) ? value.galleryTab : "solved";
+  const gallerySort = ["new", "old", "popular"].includes(value.gallerySort) ? value.gallerySort : "new";
+  const galleryDetail = value.galleryDetail === true;
+  return { route: "gallery", galleryTab, gallerySort, galleryDetail, galleryIndex: galleryDetail && Number.isInteger(value.galleryIndex) ? value.galleryIndex : 0, galleryArtist: false, galleryArtistDrawingId: null, galleryHasGalleryBack: false, galleryHasArtistListBack: false, galleryReturnState: null };
+}
+function galleryHistoryState(detail = state.galleryView === "frame", options = {}) {
+  if (!state.galleryArtistDrawingId) return fullGalleryHistoryState(detail);
+  const galleryReturnState = validGalleryReturnState(options.galleryReturnState ?? history.state?.galleryReturnState);
+  const galleryHasGalleryBack = state.galleryHasGalleryBack === true && (options.galleryHasGalleryBack ?? history.state?.galleryHasGalleryBack) === true && !!galleryReturnState;
+  const galleryHasArtistListBack = detail && (options.galleryHasArtistListBack ?? history.state?.galleryHasArtistListBack) === true;
+  return {
+    route: "gallery",
+    galleryTab: ["solved", "expired"].includes(state.galleryTab) ? state.galleryTab : "solved",
+    gallerySort: ["new", "old", "popular"].includes(state.gallerySort) ? state.gallerySort : "new",
+    galleryDetail: detail,
+    galleryIndex: detail ? state.galleryIndex : 0,
+    galleryArtist: true,
+    galleryArtistDrawingId: state.galleryArtistDrawingId,
+    galleryHasGalleryBack,
+    galleryHasArtistListBack,
+    galleryReturnState
   };
 }
 function openGalleryArtist(drawing) {
   const artist = galleryArtistIdentity(drawing);
   if (!artist) return false;
   if (state.galleryView === "thumb") state.galleryScroll[galleryListKey()] = scrollY;
+  const galleryReturnState = fullGalleryHistoryState(state.galleryView === "frame");
+  history.replaceState(galleryReturnState, "", "#gallery");
   state.galleryArtistDrawingId = artist.drawingId;
   state.galleryArtist = artist;
+  state.galleryHasGalleryBack = true;
   state.galleryView = "thumb";
   state.galleryIndex = 0;
   state.galleryScroll[galleryListKey()] = 0;
-  history.pushState(galleryHistoryState(false), "", "#gallery");
+  history.pushState(galleryHistoryState(false, { galleryHasGalleryBack: true, galleryReturnState }), "", "#gallery");
   renderGallery();
   return true;
 }
-function showFullGallery({ replace = false } = {}) {
+function showFullGallery({ replace = false, historyState = null } = {}) {
+  const restoredState = validGalleryReturnState(historyState);
   state.galleryArtistDrawingId = null;
   state.galleryArtist = null;
-  state.galleryView = "thumb";
-  state.galleryIndex = 0;
-  const nextState = galleryHistoryState(false);
+  state.galleryHasGalleryBack = false;
+  state.galleryTab = restoredState?.galleryTab || state.galleryTab;
+  state.gallerySort = restoredState?.gallerySort || state.gallerySort;
+  state.galleryView = restoredState?.galleryDetail ? "frame" : "thumb";
+  state.galleryIndex = restoredState?.galleryDetail ? restoredState.galleryIndex : 0;
+  const nextState = restoredState || fullGalleryHistoryState(false);
   if (replace) history.replaceState(nextState, "", "#gallery");
   else history.pushState(nextState, "", "#gallery");
   renderGallery();
 }
 function returnFromArtistGallery() {
-  if (history.state?.galleryHasGalleryBack) history.back();
-  else showFullGallery({ replace: true });
+  const galleryReturnState = validGalleryReturnState(history.state?.galleryReturnState);
+  if (state.galleryHasGalleryBack === true && history.state?.galleryHasGalleryBack === true && galleryReturnState) history.back();
+  else showFullGallery({ replace: true, historyState: galleryReturnState });
+}
+function returnFromArtistDetail() {
+  if (history.state?.galleryHasArtistListBack === true) history.back();
+  else {
+    state.galleryView = "thumb";
+    state.galleryIndex = 0;
+    history.replaceState(galleryHistoryState(false, { galleryHasArtistListBack: false }), "", "#gallery");
+    renderGallery();
+  }
 }
 async function renderGallery(force = false) {
   const request = beginScreenRequest("gallery");
@@ -2674,7 +2726,7 @@ async function renderGallery(force = false) {
     const artistMode = !!state.galleryArtistDrawingId;
     const heading = artistMode ? `${escapeHtml(state.galleryArtist.name)}님의 작품` : "전시장";
     const description = artistMode ? "완성 액자와 미해결 그림을 함께 보여드려요." : "그림을 감상하고 마음에 쏙 들면 좋아요!";
-    const artistReturn = artistMode ? '<button class="gallery-return-button" data-gallery-return>← 전체 전시장으로</button>' : "";
+    const artistReturn = artistMode && state.galleryView === "thumb" ? '<button class="gallery-return-button" data-gallery-return>← 전체 전시장으로</button>' : "";
     const tabs = artistMode ? "" : `<div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div>`;
     appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}${artistMode ? " gallery-artist-screen" : ""}">${artistReturn}<h2>${heading}</h2><p class="muted">${description}</p>${tabs}<div class="gallery-controls"><select id="gallerySort" aria-label="작품 정렬"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div>${state.isAdmin ? '<button class="button ghost migration-open" data-open-migration>기존 그림 최적화</button>' : ""}<div id="galleryContent"></div></section>`;
     renderGalleryContent(list);
@@ -2757,7 +2809,7 @@ function bindGalleryContent(list) {
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
   document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => {
     state.galleryScroll[galleryListKey()] = scrollY; state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame";
-    history.pushState(galleryHistoryState(true), "", "#gallery"); renderGalleryContent(list);
+    history.pushState(galleryHistoryState(true, { galleryHasArtistListBack: !!state.galleryArtistDrawingId }), "", "#gallery"); renderGalleryContent(list);
   });
   document.querySelectorAll("[data-artist-drawing]").forEach(button => button.onclick = event => {
     event.stopPropagation();

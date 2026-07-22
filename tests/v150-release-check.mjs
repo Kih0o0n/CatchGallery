@@ -15,14 +15,17 @@ assert.doesNotMatch(app.match(/class="home-version"[^\n]+/)?.[0] || "", /v1\.4\.
 const current = readme.indexOf("## v1.5.0 사용성 개선");
 const historical = readme.indexOf("## v1.4.0 그림판 색상과 반짝이 색연필");
 assert.ok(current >= 0 && historical > current, "README must lead with v1.5.0 and retain v1.4.0 history");
+const currentLines = readme.slice(current, historical).split(/\r?\n/);
+const noteTitle = "[캐치갤러리 v1.5.0 패치 노트🎉]";
 const notes = [
-  "그림판 굵기 조절 바가 브라우저와 관계없이 같은 모습으로 보여요",
-  "굵기를 조절할 때 현재 굵기 숫자와 기본 굵기를 확인할 수 있어요",
-  "전시장에서 작가별 작품을 모아볼 수 있어요",
-  "정답을 맞힌 직후 결과 화면에서 바로 좋아요를 누를 수 있어요"
+  "- 그림판 굵기 조절 바가 브라우저와 관계없이 같은 모습으로 보여요.",
+  "- 굵기를 조절할 때 현재 굵기 숫자와 기본 굵기를 확인할 수 있어요.",
+  "- 전시장에서 작가별 작품을 모아볼 수 있어요.",
+  "- 정답을 맞힌 직후 결과 화면에서 바로 좋아요를 누를 수 있어요."
 ];
-assert.match(readme, /\[캐치갤러리 v1\.5\.0 패치 노트🎉\]/);
-for (const note of notes) assert.equal((readme.match(new RegExp(note, "g")) || []).length, 1, `exact release note required: ${note}`);
+assert.equal(currentLines.filter(line => line === noteTitle).length, 1, "exact release-note title must occur once in the current section");
+assert.deepEqual(currentLines.filter(line => line.startsWith("- ")), notes, "current release-note bullets must match exactly and remain ordered");
+for (const note of notes) assert.equal(currentLines.filter(line => line === note).length, 1, `exact current-section release note required once: ${note}`);
 
 assert.match(app, /id="brushSize" type="range" min="3" max="34" value="9"/);
 assert.match(app, />9\(기본\)<\/output>/);

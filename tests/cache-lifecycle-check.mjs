@@ -53,7 +53,7 @@ function sessionHarness() {
     user: { id: "a" }, cacheOwnerUid: null, cacheGeneration: 0,
     thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200),
     galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), pendingLikeOwners: new Map(), manageDrawings: null,
-    galleryMetadata: {}, galleryMetadataPromises: {}, hintUsed: {}, editingFeedback: null,
+    galleryMetadata: {}, galleryMetadataPromises: {}, recentFinalizedDrawings: new Map(), hintUsed: {}, editingFeedback: null,
     expirySweepPromise: null, expirySweepCompletedAt: 0, provisionalCleanupPromise: null, provisionalCleanupCompletedAt: 0, rankingSnapshot: null, rankingSnapshotPromise: null,
     feedbackSnapshot: null, feedbackSnapshotPromise: null, feedbackBodyCache: new LimitedLruCache(40), feedbackBodyPromises: new Map(), feedbackPending: new Map()
   };
@@ -70,6 +70,7 @@ function sessionHarness() {
   h.state.hintUsed = { drawing: true };
   h.state.editingFeedback = { id: "feedback-a", content: "사용자 A의 의견" };
   h.state.galleryMetadata = { solved: [{ id: "image" }] };
+  h.state.recentFinalizedDrawings.set("image", { uid: "a" });
   h.state.expirySweepPromise = Promise.resolve({}); h.state.expirySweepCompletedAt = 123;
   h.state.provisionalCleanupPromise = Promise.resolve({}); h.state.provisionalCleanupCompletedAt = 456;
   h.state.rankingSnapshot = [{ id: "a" }]; h.state.rankingSnapshotPromise = Promise.resolve([]);
@@ -87,6 +88,7 @@ function sessionHarness() {
   assert.equal(h.state.thumbnailCache.size, 0); assert.equal(h.state.detailImageCache.size, 0); assert.equal(h.state.likeCache.size, 0);
   assert.deepEqual(h.state.galleryLists, {}); assert.deepEqual(h.state.galleryScroll, {}); assert.equal(h.state.pendingLikes.size, 0); assert.equal(h.state.pendingLikeOwners.size, 0); assert.equal(h.state.manageDrawings, null);
   assert.deepEqual(h.state.galleryMetadata, {}); assert.deepEqual(h.state.galleryMetadataPromises, {});
+  assert.equal(h.state.recentFinalizedDrawings.size, 0);
   assert.equal(h.state.expirySweepPromise, null); assert.equal(h.state.expirySweepCompletedAt, 0);
   assert.equal(h.state.provisionalCleanupPromise, null); assert.equal(h.state.provisionalCleanupCompletedAt, 0);
   assert.equal(h.state.rankingSnapshot, null); assert.equal(h.state.rankingSnapshotPromise, null);
@@ -172,18 +174,19 @@ function cacheState() {
       "solved:new": [{ id: "drawing" }], "solved:old": [{ id: "drawing" }], "solved:popular": [{ id: "drawing" }],
       "expired:new": [{ id: "other" }], "expired:old": [{ id: "other" }]
     },
-    thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200), pendingLikes: new Set(["drawing"]), pendingLikeOwners: new Map([["drawing", Symbol("drawing")]])
+    thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200), recentFinalizedDrawings: new Map([["drawing", { uid: "a" }]]), pendingLikes: new Set(["drawing"]), pendingLikeOwners: new Map([["drawing", Symbol("drawing")]])
   };
 }
 {
   const state = cacheState();
   state.thumbnailCache.set("drawing", "thumb"); state.detailImageCache.set("drawing", "detail"); state.likeCache.set("drawing", { liked: true });
   const invalidateGalleryListsByStatus = Function("state", `${pick("invalidateGalleryListsByStatus")}; return invalidateGalleryListsByStatus;`)(state);
-  const invalidate = Function("state", "invalidateGalleryListsByStatus", `${pick("clearPendingLikeOperation")}; ${pick("invalidateDrawingCachesAfterAdminDelete")}; return invalidateDrawingCachesAfterAdminDelete;`)(state, invalidateGalleryListsByStatus);
+  const invalidate = Function("state", "invalidateGalleryListsByStatus", "removeRecentFinalizedDrawing", `${pick("clearPendingLikeOperation")}; ${pick("invalidateDrawingCachesAfterAdminDelete")}; return invalidateDrawingCachesAfterAdminDelete;`)(state, invalidateGalleryListsByStatus, id => state.recentFinalizedDrawings.delete(id));
   invalidate("drawing", "solved");
   assert.equal(state.galleryLists["solved:new"], undefined); assert.equal(state.galleryLists["solved:old"], undefined); assert.equal(state.galleryLists["solved:popular"], undefined);
   assert.ok(state.galleryLists["expired:new"]); assert.ok(state.galleryLists["expired:old"]);
   assert.equal(state.thumbnailCache.has("drawing"), false); assert.equal(state.detailImageCache.has("drawing"), false); assert.equal(state.likeCache.has("drawing"), false); assert.equal(state.pendingLikes.has("drawing"), false); assert.equal(state.pendingLikeOwners.has("drawing"), false);
+  assert.equal(state.recentFinalizedDrawings.has("drawing"), false);
 }
 
 {

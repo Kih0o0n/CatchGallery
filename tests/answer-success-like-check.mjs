@@ -31,12 +31,12 @@ async function runSubmit(currentDrawing, answer = "answer") {
   const db = { ref: path => path === "drawings/safe-id" ? drawingRef : { once: async () => ({ exists: () => true }) } };
   const submitAnswer = Function(
     "state", "db", "resolveDrawingId", "serverNow", "loadRecentSolverSuccessCount", "solverRewardFor",
-    "safeObject", "normalizeAnswer", "isOwnDrawing", "drawerName", "invalidateGalleryListsByStatus", "claimAnswerRewards",
+    "safeObject", "normalizeAnswer", "isOwnDrawing", "drawerName", "invalidateGalleryListsByStatus", "cacheRecentFinalizedDrawing", "claimAnswerRewards",
     `"use strict"; ${pick("submitAnswer")}; return submitAnswer;`
   )(
     state, db, async () => "safe-id", () => 100, async () => 0, () => 10,
     value => value || {}, value => String(value || "").trim().toLowerCase(), drawing => drawing.drawerId === state.user.id,
-    drawing => drawing.drawerNickname || "unknown", () => {}, async () => {}
+    drawing => drawing.drawerNickname || "unknown", () => {}, () => true, async () => {}
   );
   return submitAnswer("safe-id", answer, false);
 }

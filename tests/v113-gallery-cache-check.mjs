@@ -86,7 +86,8 @@ function submitHarness({ drawing, answer = "정답", transactionMode = "normal",
       claims.push([id, value]);
       if (claimError) throw claimError;
     },
-    invalidateGalleryListsByStatus
+    invalidateGalleryListsByStatus,
+    cacheRecentFinalizedDrawing: () => true
   };
   const names = Object.keys(dependencies);
   const submitAnswer = Function(...names, `"use strict"; ${submitSource}; return submitAnswer;`)(...names.map(name => dependencies[name]));

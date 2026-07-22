@@ -75,6 +75,6 @@ assert.match(migration, /state\.migrationCursor = migrationNextCursor\(batchStar
 assert.match(migration, /finally \{[\s\S]*state\.migrationRunning = false/);
 assert.match(app, /migrationBatch:\s*2/);
 assert.match(app, /migrationTimeout:\s*25000/);
-assert.match(app, /home-version[^\n]+v1\.4\.0/);
+assert.match(app, /home-version[^\n]+v1\.5\.0/);
 
 console.log("v1.1.2 pagination checks passed.");

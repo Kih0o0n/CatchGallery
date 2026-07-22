@@ -6,11 +6,8 @@ const read = relativePath => fs.readFileSync(new URL(relativePath, rootUrl), "ut
 const app = read("app.js");
 const index = read("index.html");
 const readme = read("README.md");
-const securityCheck = read("tests/security-static-check.mjs");
-
-assert.match(app, /home-version[^\n]+>v1\.4\.0<\/div>/, "home must display v1.4.0");
+assert.match(app, /home-version[^\n]+>v1\.5\.0<\/div>/, "home must display the current release version");
 assert.equal((app.match(/class="home-version"/g) || []).length, 1, "app must keep one current-version display location");
-assert.match(securityCheck, /home-version[^\n]+v1\\\.4\\\.0/, "security check must expect v1.4.0");
 
 const currentSection = readme.indexOf("## v1.4.0 그림판 색상과 반짝이 색연필");
 const previousSection = readme.indexOf("## v1.3.0 기기 호환성과 안정성 강화");
@@ -35,4 +32,4 @@ const appScript = index.indexOf('<script src="app.js"></script>');
 assert.ok(additionsScript >= 0 && appScript > additionsScript, "v1.3.0 word additions must remain loaded before app.js");
 assert.ok(fs.existsSync(new URL("RELEASE_NOTES_v1.3.0.md", rootUrl)), "v1.3.0 release notes must remain historical documentation");
 
-console.log("v1.4.0 release checks passed: current version, README notes, 16-color metallic palette, and v1.3.0 history.");
+console.log("v1.4.0 historical release checks passed: README notes, 16-color metallic palette, and v1.3.0 history.");

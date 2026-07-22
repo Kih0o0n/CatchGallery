@@ -1114,6 +1114,9 @@ function renderHome() {
 }
 
 function renderDraw() {
+  const previousCanvasInputCleanup = state.canvasInputCleanup;
+  state.canvasInputCleanup = null;
+  previousCanvasInputCleanup?.();
   if (!state.word) randomWord();
   const edit = state.editDrawing;
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';

@@ -232,12 +232,18 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; overscro
 .publish-complete-modal { text-align: center; }
 .publish-complete-modal h3 { margin-top: 0; }
 .publish-complete-actions { display: grid; gap: 8px; margin-top: 14px; }
-.answer-success-modal { text-align: center; overflow: hidden; animation: successPop .28s cubic-bezier(.2,.9,.3,1.25); }
+.answer-success-modal { text-align: center; overflow: auto; animation: successPop .28s cubic-bezier(.2,.9,.3,1.25); }
 .answer-success-modal h3 { margin: 3px 0 12px; font-size: 27px; }
 .success-sparkles { font-size: 23px; letter-spacing: 5px; animation: sparkle .75s ease-in-out 2 alternate; }
 .answer-success-modal p { margin: 7px 0; }
 .success-score { display: inline-block; padding: 8px 14px; border-radius: 999px; background: #fff4ca; color: #9a6517; font-weight: 800; }
 .success-reward { color: #5b8b70; font-size: 14px; }
+.answer-success-like { margin-top: 14px; padding: 12px; border: 1px solid #f0d8de; border-radius: 16px; background: #fff7f9; }
+.answer-success-like p { margin: 0 0 8px; color: #76535d; font-size: 14px; }
+.answer-success-like-button { min-height: 48px; margin-top: 0 !important; }
+.answer-success-like-button.is-liked .heart { color: #ef4444; }
+.answer-success-like-status { min-height: 20px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.answer-success-like-retry { min-height: 32px; border: 0; padding: 3px 6px; background: transparent; color: #a14861; font-weight: 800; text-decoration: underline; }
 .answer-success-modal .button { margin-top: 12px; }
 @keyframes successPop { from { transform: scale(.86) translateY(10px); opacity: 0; } }
 @keyframes sparkle { to { transform: translateY(-3px) scale(1.08); filter: brightness(1.08); } }

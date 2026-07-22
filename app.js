@@ -320,6 +320,8 @@ const state = {
   cacheOwnerUid: null,
   cacheGeneration: 0,
   pendingLikes: new Set(),
+  pendingLikeOwners: new Map(),
+  answerSuccessModalCleanup: null,
   solveObserver: null,
   solveLoader: null,
   galleryObserver: null,
@@ -457,6 +459,7 @@ function invalidateGalleryListsByStatus(status) {
 }
 function resetUserSessionCaches() {
   if (typeof cancelFeedbackLoading === "function") cancelFeedbackLoading();
+  state.answerSuccessModalCleanup?.();
   state.thumbnailCache.clear();
   state.detailImageCache.clear();
   state.likeCache.clear();
@@ -468,6 +471,7 @@ function resetUserSessionCaches() {
   state.galleryArtist = null;
   state.galleryHasGalleryBack = false;
   state.pendingLikes.clear();
+  state.pendingLikeOwners.clear();
   state.manageDrawings = null;
   state.hintUsed = {};
   state.editingFeedback = null;
@@ -493,6 +497,23 @@ function setCacheSession(uid) {
 }
 function isCacheSessionCurrent(uid, generation) {
   return !!uid && state.cacheOwnerUid === uid && state.user?.id === uid && state.cacheGeneration === generation;
+}
+function beginLikeOperation(drawingId) {
+  if (!isSafeRecordId(drawingId) || state.pendingLikes.has(drawingId)) return null;
+  const token = Symbol(drawingId);
+  state.pendingLikes.add(drawingId);
+  state.pendingLikeOwners.set(drawingId, token);
+  return token;
+}
+function finishLikeOperation(drawingId, token) {
+  if (!token || state.pendingLikeOwners.get(drawingId) !== token) return false;
+  state.pendingLikeOwners.delete(drawingId);
+  state.pendingLikes.delete(drawingId);
+  return true;
+}
+function clearPendingLikeOperation(drawingId) {
+  state.pendingLikeOwners.delete(drawingId);
+  state.pendingLikes.delete(drawingId);
 }
 function showToast(message) {
   const el = document.querySelector("#toast");
@@ -668,6 +689,7 @@ function isConfigured() {
   return false;
 }
 function cleanupScreenResources() {
+  state.answerSuccessModalCleanup?.();
   cancelSolveImageLoading();
   cancelManageImageLoading();
   cancelFeedbackLoading();
@@ -2763,12 +2785,23 @@ function invalidateDrawingCachesAfterAdminDelete(drawingId, status) {
   state.thumbnailCache.delete(drawingId);
   state.detailImageCache.delete(drawingId);
   state.likeCache.delete(drawingId);
-  state.pendingLikes.delete(drawingId);
+  clearPendingLikeOperation(drawingId);
+}
+function likeAccessibilityLabel(value, own = false) {
+  const count = Math.max(0, Number(value?.count) || 0);
+  if (own) return `좋아요 ${count}개 · 내 그림에는 좋아요를 누를 수 없음`;
+  return value?.liked ? `좋아요 취소, 현재 ${count}개` : `좋아요, 현재 ${count}개`;
+}
+function updateLikeButtonAccessibility(button, value) {
+  if (button.matches("[data-answer-success-like]") && ["loading", "retry", "saving"].includes(button.dataset.likeState)) return;
+  button.setAttribute("aria-label", likeAccessibilityLabel(value, button.dataset.ownLike === "true"));
 }
 function galleryFrame(list, i) {
   const d = list[i];
   const statusBadge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : "";
-  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot">${statusBadge}<img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div>${galleryArtistButton(d, false)}<button class="button like-button ${isOwnDrawing(d) ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${isOwnDrawing(d) ? " · 내 그림" : ""}</button></div>`;
+  const own = isOwnDrawing(d);
+  const likeValue = { liked: !!d.isLiked, count: Number(d.likeCount) || 0 };
+  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot">${statusBadge}<img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div>${galleryArtistButton(d, false)}<button class="button like-button ${own ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-label="${likeAccessibilityLabel(likeValue, own)}" aria-pressed="${d.isLiked ? "true" : "false"}" ${own ? 'data-own-like="true" disabled' : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${own ? " · 내 그림" : ""}</button></div>`;
 }
 function galleryArtistButton(drawing, compact = false) {
   if (state.galleryArtistDrawingId || !galleryArtistIdentity(drawing)) return "";
@@ -2778,7 +2811,7 @@ function galleryArtistButton(drawing, compact = false) {
   return `<button class="gallery-artist-button${compact ? " compact-artist-button" : ""}" data-artist-drawing="${drawing.id}" aria-label="${label}"><span aria-hidden="true">👤</span><span class="artist-button-name">${visibleName}${isOwnDrawing(drawing) ? "" : "님"}</span><span class="artist-button-action">작품 보기 〉</span></button>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => { const badge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : ""; return `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot">${badge}<img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="좋아요" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${galleryArtistButton(d, true)}${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`; }).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => { const badge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : ""; const own = isOwnDrawing(d); const likeValue = { liked: !!d.isLiked, count: Number(d.likeCount) || 0 }; return `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot">${badge}<img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="${likeAccessibilityLabel(likeValue, own)}" aria-pressed="${d.isLiked ? "true" : "false"}" ${own ? 'data-own-like="true" disabled' : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${galleryArtistButton(d, true)}${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`; }).join("")}</div>`;
 }
 function renderGalleryContent(list = state.galleryLists[galleryListKey()] || []) {
   const content = document.querySelector("#galleryContent");
@@ -2819,8 +2852,10 @@ function bindGalleryContent(list) {
   document.querySelectorAll("[data-like]").forEach(button => button.onclick = async event => {
     event.stopPropagation();
     const id = button.dataset.like;
-    if (button.disabled || state.pendingLikes.has(id)) return;
-    state.pendingLikes.add(id); button.disabled = true;
+    if (button.disabled) return;
+    const operationToken = beginLikeOperation(id);
+    if (!operationToken) return;
+    button.disabled = true;
     try {
       await ensureLikeState(id); await toggleLike(id, list.find(d => d.id === id));
       if (!isScreenRequestCurrent(request)) return;
@@ -2828,7 +2863,7 @@ function bindGalleryContent(list) {
     }
     catch (error) { if (isScreenRequestCurrent(request)) showToast(userErrorMessage(error)); }
     finally {
-      state.pendingLikes.delete(id);
+      if (!finishLikeOperation(id, operationToken)) return;
       if (!isScreenRequestCurrent(request)) return;
       const own = isOwnDrawing(list.find(d => d.id === id));
       document.querySelectorAll(`[data-like="${id}"]`).forEach(item => { item.disabled = own; });
@@ -2930,8 +2965,16 @@ function syncGalleryLike(id) {
   document.querySelectorAll(`[data-like="${id}"]`).forEach(button => {
     button.classList.toggle("is-liked", value.liked);
     button.setAttribute("aria-pressed", String(value.liked));
+    updateLikeButtonAccessibility(button, value);
     const heart = button.querySelector(".heart"); if (heart) heart.textContent = value.liked ? "♥" : "♡";
     const count = button.querySelector("[data-like-count]"); if (count) count.textContent = value.count;
+  });
+}
+function syncAnswerSuccessLikeAvailability(id) {
+  if (!isSafeRecordId(id) || !state.likeCache.has(id)) return;
+  document.querySelectorAll(`[data-answer-success-like="${id}"]`).forEach(button => {
+    if (!button.isConnected || !["ready", "saving"].includes(button.dataset.likeState)) return;
+    button.disabled = state.pendingLikes.has(id);
   });
 }
 async function loadGalleryDetail(drawing, list) {
@@ -3709,16 +3752,104 @@ function confirmModal(title, message, onConfirm) {
 
 function showAnswerSuccessModal(result) {
   const root = document.querySelector("#modalRoot");
+  state.answerSuccessModalCleanup?.();
   const scoreMessage = Number(result.solverReward) > 0
     ? `풀이 점수 +${Number(result.solverReward)}점`
     : "이번에는 랭킹 점수가 오르지 않아요.";
-  root.innerHTML = `<div class="modal-backdrop answer-success-backdrop"><div class="modal answer-success-modal" role="dialog" aria-modal="true" aria-labelledby="answerSuccessTitle"><div class="success-sparkles" aria-hidden="true">✨ 🎉 ✨</div><h3 id="answerSuccessTitle">정답입니다 🎉</h3><p class="success-drawer">이 그림은 <b>${escapeHtml(result.drawerNickname || "알 수 없는 친구")}</b>님이 그렸어요!</p><p class="success-score">${scoreMessage}</p><p class="success-reward">그린 사람에게도 +30점이 들어갔어요!</p><button class="button primary full" data-success-close>계속 둘러보기</button></div></div>`;
-  const close = () => { root.innerHTML = ""; document.removeEventListener("keydown", onKeydown); };
+  const drawingId = isSafeRecordId(result.drawingId) ? result.drawingId : null;
+  const likeDrawing = result.likeDrawing;
+  const canLike = !!drawingId && !!likeDrawing && !isOwnDrawing(likeDrawing);
+  const likeHtml = canLike
+    ? `<div class="answer-success-like"><p>마음에 쏙 든 그림이라면 좋아요를 눌러주세요!</p><button class="button secondary full answer-success-like-button" data-like="${drawingId}" data-answer-success-like="${drawingId}" data-like-state="loading" aria-label="좋아요 상태 불러오는 중" aria-pressed="false" disabled><span class="heart" aria-hidden="true">♡</span> 좋아요 <span data-like-count>…</span></button><div class="answer-success-like-status" data-success-like-status aria-live="polite">좋아요를 불러오는 중…</div></div>`
+    : "";
+  root.innerHTML = `<div class="modal-backdrop answer-success-backdrop"><div class="modal answer-success-modal" role="dialog" aria-modal="true" aria-labelledby="answerSuccessTitle"><div class="success-sparkles" aria-hidden="true">✨ 🎉 ✨</div><h3 id="answerSuccessTitle">정답입니다 🎉</h3><p class="success-drawer">이 그림은 <b>${escapeHtml(result.drawerNickname || "알 수 없는 친구")}</b>님이 그렸어요!</p><p class="success-score">${scoreMessage}</p><p class="success-reward">그린 사람에게도 +30점이 들어갔어요!</p>${likeHtml}<button class="button primary full" data-success-close>계속 둘러보기</button></div></div>`;
+  const backdrop = root.firstElementChild;
+  const userId = state.user?.id;
+  const generation = state.cacheGeneration;
+  const ownsModal = () => root.firstElementChild === backdrop && backdrop?.isConnected !== false;
+  const sessionIsCurrent = () => isCacheSessionCurrent(userId, generation);
+  let observer = null;
+  const cleanup = (clear = false) => {
+    document.removeEventListener("keydown", onKeydown);
+    observer?.disconnect();
+    observer = null;
+    if (clear && ownsModal()) root.innerHTML = "";
+    if (state.answerSuccessModalCleanup === dispose) state.answerSuccessModalCleanup = null;
+  };
+  const dispose = () => cleanup(true);
+  const close = dispose;
   const onKeydown = event => { if (event.key === "Escape") close(); };
   root.querySelector("[data-success-close]").onclick = close;
   root.querySelector(".answer-success-backdrop").onclick = event => { if (event.target === event.currentTarget) close(); };
   document.addEventListener("keydown", onKeydown);
+  state.answerSuccessModalCleanup = dispose;
+  observer = new MutationObserver(() => { if (!ownsModal()) cleanup(false); });
+  observer.observe(root, { childList: true });
   root.querySelector("[data-success-close]").focus();
+
+  if (!canLike) return;
+  const likeButton = root.querySelector(`[data-like="${drawingId}"]`);
+  const status = root.querySelector("[data-success-like-status]");
+  let loadingLike = false;
+  const loadLike = async () => {
+    if (loadingLike || !ownsModal() || !sessionIsCurrent()) return;
+    loadingLike = true;
+    likeButton.dataset.likeState = "loading";
+    likeButton.disabled = true;
+    likeButton.setAttribute("aria-label", "좋아요 상태 불러오는 중");
+    status.textContent = "좋아요를 불러오는 중…";
+    try {
+      await ensureLikeState(drawingId);
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
+      syncGalleryLike(drawingId);
+      syncAnswerSuccessLikeAvailability(drawingId);
+      if (!ownsModal()) return;
+      status.textContent = "";
+    } catch (_) {
+      if (!sessionIsCurrent() || !ownsModal()) return;
+      likeButton.dataset.likeState = "retry";
+      likeButton.disabled = true;
+      likeButton.setAttribute("aria-label", "좋아요 상태를 불러오지 못함");
+      status.innerHTML = '좋아요를 불러오지 못했어요. <button type="button" class="answer-success-like-retry" data-success-like-retry>다시 불러오기</button>';
+      status.querySelector("[data-success-like-retry]").onclick = loadLike;
+    } finally {
+      loadingLike = false;
+    }
+  };
+  likeButton.onclick = async event => {
+    event.stopPropagation();
+    if (likeButton.disabled || !ownsModal() || !sessionIsCurrent()) return;
+    const operationToken = beginLikeOperation(drawingId);
+    if (!operationToken) return;
+    likeButton.dataset.likeState = "saving";
+    likeButton.disabled = true;
+    status.textContent = "좋아요를 저장하는 중…";
+    try {
+      await ensureLikeState(drawingId);
+      if (!sessionIsCurrent()) return;
+      await toggleLike(drawingId, likeDrawing);
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
+      syncGalleryLike(drawingId);
+      if (!ownsModal()) return;
+      status.textContent = "";
+    } catch (_) {
+      if (!sessionIsCurrent()) return;
+      if (ownsModal()) likeButton.dataset.likeState = "ready";
+      syncGalleryLike(drawingId);
+      if (!ownsModal()) return;
+      status.textContent = "좋아요를 바꾸지 못했어요. 다시 시도해 주세요.";
+    } finally {
+      if (!finishLikeOperation(drawingId, operationToken)) return;
+      if (sessionIsCurrent()) {
+        if (ownsModal() && likeButton.dataset.likeState === "saving") likeButton.dataset.likeState = "ready";
+        syncGalleryLike(drawingId);
+        syncAnswerSuccessLikeAvailability(drawingId);
+      }
+    }
+  };
+  loadLike();
 }
 
 async function claimAnswerRewards(drawingId, drawing) {
@@ -3747,6 +3878,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   if (!answer) return { correct: false, message: "정답을 입력해 주세요." };
 
   const resolvedId = await resolveDrawingId(drawingId);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(resolvedId || "")) return { correct: false, message: "표시할 수 없는 그림이에요." };
   const drawingRef = db.ref(`drawings/${resolvedId}`);
 
   // Firebase Realtime Database transaction의 update 함수는
@@ -3770,7 +3902,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
     if (d.status === "solved" && d.solverId === state.user.id) {
       settledDrawing = d;
-      outcome = { correct: true, solverReward: d.solverReward, drawerReward: d.drawerReward, drawerNickname: drawerName(d) };
+      outcome = { correct: true, drawingId: resolvedId, likeDrawing: d, solverReward: d.solverReward, drawerReward: d.drawerReward, drawerNickname: drawerName(d) };
       return;
     }
 
@@ -3787,7 +3919,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
     if (!acceptedAnswers.some(candidate => normalizeAnswer(candidate) === normalizeAnswer(answer))) return;
 
     const drawerReward = 30;
-    outcome = { correct: true, solverReward, drawerReward, drawerNickname: drawerName(d) };
+    outcome = { correct: true, drawingId: resolvedId, solverReward, drawerReward, drawerNickname: drawerName(d) };
 
     const solvedUpdate = {
       ...d,
@@ -3814,7 +3946,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   if (settledDrawing) {
     invalidateGalleryListsByStatus("solved");
     await claimAnswerRewards(resolvedId, settledDrawing);
-    return outcome;
+    return { ...outcome, drawingId: resolvedId, likeDrawing: settledDrawing };
   }
 
   if (!outcome.correct) return outcome;
@@ -3822,7 +3954,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
   invalidateGalleryListsByStatus("solved");
   await claimAnswerRewards(resolvedId, transactionDrawing);
-  return outcome;
+  return { ...outcome, drawingId: resolvedId, likeDrawing: transactionDrawing };
 }
 async function toggleLike(drawingId, cachedDrawing = null) {
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(drawingId || "")) throw new Error("좋아요를 누를 수 없는 그림이에요.");

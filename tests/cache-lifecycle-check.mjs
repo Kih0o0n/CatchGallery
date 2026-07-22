@@ -52,7 +52,7 @@ function sessionHarness() {
   const state = {
     user: { id: "a" }, cacheOwnerUid: null, cacheGeneration: 0,
     thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200),
-    galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), manageDrawings: null,
+    galleryLists: {}, galleryScroll: {}, pendingLikes: new Set(), pendingLikeOwners: new Map(), manageDrawings: null,
     galleryMetadata: {}, galleryMetadataPromises: {}, hintUsed: {}, editingFeedback: null,
     expirySweepPromise: null, expirySweepCompletedAt: 0, provisionalCleanupPromise: null, provisionalCleanupCompletedAt: 0, rankingSnapshot: null, rankingSnapshotPromise: null,
     feedbackSnapshot: null, feedbackSnapshotPromise: null, feedbackBodyCache: new LimitedLruCache(40), feedbackBodyPromises: new Map(), feedbackPending: new Map()
@@ -66,7 +66,7 @@ function sessionHarness() {
   h.setCacheSession("a");
   h.state.thumbnailCache.set("image", "thumb"); h.state.detailImageCache.set("image", "detail"); h.state.likeCache.set("image", { liked: true });
   h.state.galleryLists = { "solved:new": [{ id: "image", isLiked: true }] };
-  h.state.galleryScroll = { "solved:new": 55 }; h.state.pendingLikes.add("image"); h.state.manageDrawings = [{ id: "image" }];
+  h.state.galleryScroll = { "solved:new": 55 }; h.state.pendingLikes.add("image"); h.state.pendingLikeOwners.set("image", Symbol("image")); h.state.manageDrawings = [{ id: "image" }];
   h.state.hintUsed = { drawing: true };
   h.state.editingFeedback = { id: "feedback-a", content: "사용자 A의 의견" };
   h.state.galleryMetadata = { solved: [{ id: "image" }] };
@@ -85,7 +85,7 @@ function sessionHarness() {
   assert.deepEqual(h.state.rankingSnapshot, [{ id: "a" }], "same UID preserves ranking snapshot");
   assert.equal(h.setCacheSession("b"), true);
   assert.equal(h.state.thumbnailCache.size, 0); assert.equal(h.state.detailImageCache.size, 0); assert.equal(h.state.likeCache.size, 0);
-  assert.deepEqual(h.state.galleryLists, {}); assert.deepEqual(h.state.galleryScroll, {}); assert.equal(h.state.pendingLikes.size, 0); assert.equal(h.state.manageDrawings, null);
+  assert.deepEqual(h.state.galleryLists, {}); assert.deepEqual(h.state.galleryScroll, {}); assert.equal(h.state.pendingLikes.size, 0); assert.equal(h.state.pendingLikeOwners.size, 0); assert.equal(h.state.manageDrawings, null);
   assert.deepEqual(h.state.galleryMetadata, {}); assert.deepEqual(h.state.galleryMetadataPromises, {});
   assert.equal(h.state.expirySweepPromise, null); assert.equal(h.state.expirySweepCompletedAt, 0);
   assert.equal(h.state.provisionalCleanupPromise, null); assert.equal(h.state.provisionalCleanupCompletedAt, 0);
@@ -172,18 +172,18 @@ function cacheState() {
       "solved:new": [{ id: "drawing" }], "solved:old": [{ id: "drawing" }], "solved:popular": [{ id: "drawing" }],
       "expired:new": [{ id: "other" }], "expired:old": [{ id: "other" }]
     },
-    thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200), pendingLikes: new Set(["drawing"])
+    thumbnailCache: new LimitedLruCache(60), detailImageCache: new LimitedLruCache(12), likeCache: new LimitedLruCache(200), pendingLikes: new Set(["drawing"]), pendingLikeOwners: new Map([["drawing", Symbol("drawing")]])
   };
 }
 {
   const state = cacheState();
   state.thumbnailCache.set("drawing", "thumb"); state.detailImageCache.set("drawing", "detail"); state.likeCache.set("drawing", { liked: true });
   const invalidateGalleryListsByStatus = Function("state", `${pick("invalidateGalleryListsByStatus")}; return invalidateGalleryListsByStatus;`)(state);
-  const invalidate = Function("state", "invalidateGalleryListsByStatus", `${pick("invalidateDrawingCachesAfterAdminDelete")}; return invalidateDrawingCachesAfterAdminDelete;`)(state, invalidateGalleryListsByStatus);
+  const invalidate = Function("state", "invalidateGalleryListsByStatus", `${pick("clearPendingLikeOperation")}; ${pick("invalidateDrawingCachesAfterAdminDelete")}; return invalidateDrawingCachesAfterAdminDelete;`)(state, invalidateGalleryListsByStatus);
   invalidate("drawing", "solved");
   assert.equal(state.galleryLists["solved:new"], undefined); assert.equal(state.galleryLists["solved:old"], undefined); assert.equal(state.galleryLists["solved:popular"], undefined);
   assert.ok(state.galleryLists["expired:new"]); assert.ok(state.galleryLists["expired:old"]);
-  assert.equal(state.thumbnailCache.has("drawing"), false); assert.equal(state.detailImageCache.has("drawing"), false); assert.equal(state.likeCache.has("drawing"), false); assert.equal(state.pendingLikes.has("drawing"), false);
+  assert.equal(state.thumbnailCache.has("drawing"), false); assert.equal(state.detailImageCache.has("drawing"), false); assert.equal(state.likeCache.has("drawing"), false); assert.equal(state.pendingLikes.has("drawing"), false); assert.equal(state.pendingLikeOwners.has("drawing"), false);
 }
 
 {

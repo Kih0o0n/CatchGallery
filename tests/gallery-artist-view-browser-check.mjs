@@ -34,7 +34,7 @@ if (!chrome) {
   process.exit(0);
 }
 
-const sources = ["normalizedArtistName", "hasViewableArtist", "galleryArtistIdentity", "isDrawingByArtist", "galleryDisplayTime", "sortGalleryDrawings", "galleryArtistButton", "galleryThumbs", "galleryFrame", "galleryListKey", "fullGalleryHistoryState", "validGalleryReturnState", "galleryHistoryState", "openGalleryArtist", "showFullGallery", "returnFromArtistGallery", "returnFromArtistDetail"].map(pick).join("\n");
+const sources = ["normalizedArtistName", "hasViewableArtist", "galleryArtistIdentity", "isDrawingByArtist", "galleryDisplayTime", "sortGalleryDrawings", "likeAccessibilityLabel", "galleryArtistButton", "galleryThumbs", "galleryFrame", "galleryListKey", "fullGalleryHistoryState", "validGalleryReturnState", "galleryHistoryState", "openGalleryArtist", "showFullGallery", "returnFromArtistGallery", "returnFromArtistDetail"].map(pick).join("\n");
 const directory = mkdtempSync(join(tmpdir(), "catchgallery-gallery-artist-"));
 const file = join(directory, "check.html");
 const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>${styles}#result{display:none}</style><button id="appBack">뒤로</button><main id="app"></main><div style="height:900px"></div><pre id="result"></pre><script>

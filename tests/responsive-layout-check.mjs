@@ -123,8 +123,8 @@ function classList(initial = []) {
   assert.match(solve, /data-answer-form="drawing-1"/);
 
   const galleryArtistButton = () => "";
-  const galleryFrame = Function("state", "escapeHtml", "drawerName", "solverName", "galleryArtistButton", "isOwnDrawing", `"use strict"; ${pick("galleryFrame")}; return galleryFrame;`)(state, String, item => item.drawerNickname, item => item.solverNickname, galleryArtistButton, () => false);
-  const galleryThumbs = Function("state", "escapeHtml", "drawerName", "galleryArtistButton", "isOwnDrawing", `"use strict"; ${pick("galleryThumbs")}; return galleryThumbs;`)(state, String, item => item.drawerNickname, galleryArtistButton, () => false);
+  const galleryFrame = Function("state", "escapeHtml", "drawerName", "solverName", "galleryArtistButton", "isOwnDrawing", `"use strict"; ${pick("likeAccessibilityLabel")}; ${pick("galleryFrame")}; return galleryFrame;`)(state, String, item => item.drawerNickname, item => item.solverNickname, galleryArtistButton, () => false);
+  const galleryThumbs = Function("state", "escapeHtml", "drawerName", "galleryArtistButton", "isOwnDrawing", `"use strict"; ${pick("likeAccessibilityLabel")}; ${pick("galleryThumbs")}; return galleryThumbs;`)(state, String, item => item.drawerNickname, galleryArtistButton, () => false);
   assert.match(galleryFrame([drawing], 0), /data-gallery-card="drawing-1"[\s\S]*data-detail-image="drawing-1"[\s\S]*data-prev[\s\S]*data-next/);
   assert.match(galleryThumbs([drawing]), /data-gallery-card="drawing-1"[\s\S]*data-thumb="0"[\s\S]*data-thumbnail-image="drawing-1"[\s\S]*data-like="drawing-1"/);
 

@@ -87,7 +87,7 @@ function classList(initial = []) {
   assert.match(appEl.innerHTML, /<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720"/);
   assert.match(appEl.innerHTML, /<canvas id="metallicPreviewCanvas" width="720" height="720" aria-hidden="true"><\/canvas>/);
   assert.equal((appEl.innerHTML.match(/data-color=/g) || []).length, drawingColors.length);
-  assert.match(appEl.innerHTML, /<div class="tools"><div class="drawing-palette"><div class="colors"[\s\S]*id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
+  assert.match(appEl.innerHTML, /<div class="tools"><div class="drawing-palette"><div class="colors"[\s\S]*id="eraser"[\s\S]*<div class="tool-grid"><div class="brush-size-control">[\s\S]*id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
   assert.ok(appEl.innerHTML.indexOf('class="card word-card"') < appEl.innerHTML.indexOf('class="custom-word-form hidden"'));
   assert.ok(appEl.innerHTML.indexOf('class="custom-word-form hidden"') < appEl.innerHTML.indexOf('id="drawingCanvas"'));
   assert.ok(appEl.innerHTML.indexOf('id="drawingCanvas"') < appEl.innerHTML.indexOf('id="saveDrawing"'));
@@ -152,7 +152,7 @@ assert.match(styles, /\.canvas-wrap,[\s\S]*#drawingCanvas,\s*#metallicPreviewCan
 assert.match(styles, /#metallicPreviewCanvas\s*\{[^}]*position:\s*absolute[^}]*pointer-events:\s*none[^}]*background:\s*transparent/);
 assert.match(app, /\[canvas, previewCanvas\]\.filter\(Boolean\)\.forEach[\s\S]*layer\.style\.transform = canvasTransform/);
 assert.match(fixture, /<header class="app-header">\s*<button class="home-button"[\s\S]*<button class="brand-button"[\s\S]*<div class="score-chip"/);
-assert.match(fixture, /<div class="tools"><div class="drawing-palette"><div class="colors" data-colors><\/div><button id="eraser"[\s\S]*<div class="tool-grid"><input id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
+assert.match(fixture, /<div class="tools"><div class="drawing-palette"><div class="colors" data-colors><\/div><button id="eraser"[\s\S]*<div class="tool-grid"><div class="brush-size-control">[\s\S]*id="brushSize"[\s\S]*id="undo"[\s\S]*id="clearCanvas"/);
 assert.doesNotMatch(styles, /drawing-scroll-lock|body\.drawing-scroll-lock[\s\S]*position:\s*fixed/);
 assert.doesNotMatch(app.match(/function setupCanvas[\s\S]*?(?=function undoCanvas)/)?.[0] || "", /window\.scrollTo|lockDrawingScroll|unlockDrawingScroll/);
 assert.match(app, /visualViewport\?\.addEventListener\("resize", scheduleViewportRefresh\)/);

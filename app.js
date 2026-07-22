@@ -1114,12 +1114,15 @@ function renderHome() {
 }
 
 function renderDraw() {
+  const previousCanvasInputCleanup = state.canvasInputCleanup;
+  state.canvasInputCleanup = null;
+  previousCanvasInputCleanup?.();
   if (!state.word) randomWord();
   const edit = state.editDrawing;
   const wordActions = edit ? "" : '<div class="word-actions"><button id="nextWord" class="button ghost">다른 제시어</button><button id="customWordButton" class="button ghost" aria-expanded="false">직접 제시어</button></div>';
   const customForm = edit ? "" : `<form id="customWordForm" class="custom-word-form hidden"><div class="custom-fields"><label>카테고리<input id="customCategory" maxlength="20" required placeholder="예: 음식"></label><label>제시어<input id="customWord" maxlength="12" required placeholder="예: 계란후라이"></label></div><label class="answer-label"><span>허용 정답 <button id="answerHelpButton" class="answer-help-button" type="button" aria-label="허용 정답 설명 보기" aria-expanded="false">?</button></span><input id="customAnswers" placeholder="달걀후라이, 계란프라이"></label><div id="answerHelp" class="answer-help hidden"><b>허용 정답이란?</b><br>정답은 맞지만 다르게 부를 수 있는 말을 적는 곳이에요.<br>예: 제시어가 ‘계란후라이’라면 ‘달걀후라이, 계란프라이’도 정답으로 인정할 수 있어요.<br>쉼표로 나누어 적어주세요.</div><button class="button secondary full" type="submit">이 제시어 사용하기</button></form>`;
   const shownAnswers = !edit && state.word.isCustomWord && state.word.answers.length > 1 ? `<small class="custom-answer-summary">허용 정답: ${state.word.answers.slice(1).map(escapeHtml).join(", ")}</small>` : "";
-  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas><canvas id="metallicPreviewCanvas" width="720" height="720" aria-hidden="true"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name, brush], i) => { const special = brush !== "solid"; const label = `${name} ${special ? "특수 브러시" : "색연필"}`; return `<button class="color ${special ? "metallic-color " : ""}${i === DEFAULT_DRAWING_COLOR_INDEX ? "selected" : ""}" data-color="${value}" data-brush="${brush}" style="--swatch-color:${value}" aria-label="${label}" title="${label}" aria-pressed="${i === DEFAULT_DRAWING_COLOR_INDEX ? "true" : "false"}"></button>`; }).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기"><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
+  appEl.innerHTML = `<section class="screen draw-screen"><div class="section-head"><div><h2>${edit ? "그림 수정하기" : "그림 그리기"}</h2><p class="muted">손가락으로 마음껏 그려요.</p></div>${wordActions}</div><div class="card word-card"><span class="category">${escapeHtml(edit?.category || state.word.category)}</span><div class="word">${escapeHtml(edit?.word || state.word.word)}</div>${shownAnswers}</div>${customForm}<div class="canvas-stage"><div class="canvas-wrap"><canvas id="drawingCanvas" width="720" height="720" aria-label="그림판"></canvas><canvas id="metallicPreviewCanvas" width="720" height="720" aria-hidden="true"></canvas></div></div><div class="tools"><div class="drawing-palette"><div class="colors">${DRAWING_COLORS.map(([value, name, brush], i) => { const special = brush !== "solid"; const label = `${name} ${special ? "특수 브러시" : "색연필"}`; return `<button class="color ${special ? "metallic-color " : ""}${i === DEFAULT_DRAWING_COLOR_INDEX ? "selected" : ""}" data-color="${value}" data-brush="${brush}" style="--swatch-color:${value}" aria-label="${label}" title="${label}" aria-pressed="${i === DEFAULT_DRAWING_COLOR_INDEX ? "true" : "false"}"></button>`; }).join("")}</div><button id="eraser" class="button ghost eraser-button" aria-pressed="false">지우개</button></div><div class="tool-grid"><div class="brush-size-control"><output id="brushSizeValue" class="brush-size-value" for="brushSize" aria-hidden="true">9(기본)</output><input id="brushSize" type="range" min="3" max="34" value="9" aria-label="붓 굵기" aria-valuetext="9, 기본 굵기"></div><button id="undo" class="button ghost">되돌리기</button><button id="clearCanvas" class="button ghost">전체 지우기</button></div></div><div class="notice">${edit ? "정답이 맞혀지면 그린 사람에게 30점!" : "누군가 정답을 맞히면 그린 사람에게 30점이 들어와요."}</div><button id="saveDrawing" class="button primary full">${edit ? "수정 저장하기" : "게시하기"}</button></section>`;
   setupCanvas(edit?.imageData);
   document.querySelectorAll(".color").forEach(button => button.onclick = () => selectDrawingColor(button));
   eraser.onclick = () => {
@@ -1656,6 +1659,73 @@ function pointerMoveShowsContactEnded(event) {
   if (event.pointerType === "pen") return event.buttons === 0 && event.pressure === 0;
   return false;
 }
+function setupBrushSizeControl(input) {
+  const wrapper = input?.closest?.(".brush-size-control");
+  const output = wrapper?.querySelector?.(".brush-size-value");
+  if (!input || !wrapper || !output) return () => {};
+  const defaultValue = 9;
+  let pointerActive = false;
+  let keyboardActive = false;
+  let disposed = false;
+  const update = () => {
+    if (disposed) return;
+    const min = Number(input.min);
+    const max = Number(input.max);
+    const value = Number(input.value);
+    const progress = max > min ? ((value - min) / (max - min)) * 100 : 0;
+    const safeProgress = Math.min(100, Math.max(0, progress));
+    wrapper.style.setProperty("--brush-progress", `${safeProgress}%`);
+    output.value = value === defaultValue ? `${value}(기본)` : String(value);
+    input.setAttribute("aria-valuetext", value === defaultValue ? `${value}, 기본 굵기` : String(value));
+  };
+  const show = () => { if (!disposed) wrapper.classList.add("is-active"); };
+  const hide = () => {
+    pointerActive = false;
+    keyboardActive = false;
+    wrapper.classList.remove("is-active");
+  };
+  const onPointerDown = () => { pointerActive = true; keyboardActive = false; update(); show(); };
+  const onInput = () => { update(); if (pointerActive || keyboardActive) show(); };
+  const onKeyDown = event => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+    keyboardActive = true;
+    pointerActive = false;
+    show();
+    window.requestAnimationFrame(update);
+  };
+  const onPointerEnd = () => { if (pointerActive) hide(); };
+  const onBlur = () => hide();
+  const onVisibility = () => { if (document.visibilityState === "hidden") hide(); };
+  input.addEventListener("pointerdown", onPointerDown);
+  input.addEventListener("input", onInput);
+  input.addEventListener("keydown", onKeyDown);
+  input.addEventListener("blur", onBlur);
+  window.addEventListener("pointerup", onPointerEnd);
+  window.addEventListener("pointercancel", onPointerEnd);
+  window.addEventListener("blur", hide);
+  window.addEventListener("pagehide", hide);
+  window.addEventListener("resize", update);
+  window.addEventListener("orientationchange", update);
+  document.addEventListener("visibilitychange", onVisibility);
+  input.value = String(defaultValue);
+  update();
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    input.removeEventListener("pointerdown", onPointerDown);
+    input.removeEventListener("input", onInput);
+    input.removeEventListener("keydown", onKeyDown);
+    input.removeEventListener("blur", onBlur);
+    window.removeEventListener("pointerup", onPointerEnd);
+    window.removeEventListener("pointercancel", onPointerEnd);
+    window.removeEventListener("blur", hide);
+    window.removeEventListener("pagehide", hide);
+    window.removeEventListener("resize", update);
+    window.removeEventListener("orientationchange", update);
+    document.removeEventListener("visibilitychange", onVisibility);
+    hide();
+  };
+}
 function setupCanvas(imageData) {
   if (typeof clearCanvasTouchSession === "function") clearCanvasTouchSession();
   bindDocumentDrawingScrollBlocker();
@@ -1670,6 +1740,7 @@ function setupCanvas(imageData) {
   state.strokeSeedCounter = 0;
   initializeCanvasHistory(state.canvas, !imageData);
   state.brushInput = document.querySelector("#brushSize");
+  const releaseBrushSizeControl = typeof setupBrushSizeControl === "function" ? setupBrushSizeControl(state.brushInput) : () => {};
   state.dirty = false;
 
   const canvas = state.canvas;
@@ -1982,6 +2053,7 @@ function setupCanvas(imageData) {
   state.canvasInputCleanup = () => {
     if (inputDisposed) return;
     inputDisposed = true;
+    releaseBrushSizeControl();
     canvas.removeEventListener("pointerdown", start);
     canvas.removeEventListener("pointermove", move);
     canvas.removeEventListener("pointerup", end);

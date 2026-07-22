@@ -62,7 +62,7 @@ try {
   const encoded = output.match(/<output id="result">([^<]+)<\/output>/)?.[1] || "null";
   const result = JSON.parse(encoded.replaceAll("&quot;", '"').replaceAll("&amp;", "&"));
   assert.ok(result && !result.error, result?.error || "Chrome did not return v1.4.0 release results");
-  assert.equal(result.version, "v1.4.0");
+  assert.equal(result.version, "v1.5.0");
   assert.equal(result.versionLabel, "앱 버전");
   assert.equal(result.booted, true);
   assert.equal(result.colorCount, 16);
@@ -72,7 +72,7 @@ try {
   assert.deepEqual(result.preview, [720, 720]);
   console.log(`v1.4.0 release browser: ${chrome}`);
   console.log(JSON.stringify(result));
-  console.log("v1.4.0 release browser checks passed.");
+  console.log("v1.4.0 historical feature browser checks passed on the current release.");
 } finally {
   rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

@@ -96,7 +96,19 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; overscro
 .color.metallic-color::after { content: ""; position: absolute; left: 54%; top: 18%; width: 5px; height: 5px; background: white; clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); filter: drop-shadow(0 0 1px rgba(255,255,255,.9)); }
 .manage-new-drawing { margin: 10px 0 12px; padding: 9px 15px; }
 .tool-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; }
-input[type="range"] { padding: 0; accent-color: var(--pink); }
+.brush-size-control { --brush-progress: 19.3548%; position: relative; min-width: 0; display: flex; align-items: center; padding-top: 18px; }
+.brush-size-control input[type="range"] { width: 100%; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 999px; appearance: none; -webkit-appearance: none; background: linear-gradient(to right, var(--pink) 0 var(--brush-progress), #fff 0 100%) center / 100% 8px no-repeat, linear-gradient(rgba(104,82,91,.18), rgba(104,82,91,.18)) center / 100% 10px no-repeat; cursor: pointer; }
+.brush-size-control input[type="range"]::-webkit-slider-runnable-track { height: 8px; border: 0; border-radius: 999px; background: transparent; }
+.brush-size-control input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -6px; border: 2px solid #fff; border-radius: 50%; appearance: none; -webkit-appearance: none; background: var(--pink); box-shadow: 0 1px 4px rgba(80,48,59,.3); }
+.brush-size-control input[type="range"]::-moz-range-track { height: 8px; border: 1px solid rgba(104,82,91,.18); border-radius: 999px; background: #fff; }
+.brush-size-control input[type="range"]::-moz-range-progress { height: 8px; border-radius: 999px; background: var(--pink); }
+.brush-size-control input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 2px solid #fff; border-radius: 50%; background: var(--pink); box-shadow: 0 1px 4px rgba(80,48,59,.3); }
+.brush-size-control input[type="range"]:focus { box-shadow: none; }
+.brush-size-control input[type="range"]:focus-visible { outline: 3px solid rgba(233,111,133,.38); outline-offset: 3px; }
+.brush-size-control input[type="range"]:disabled { cursor: not-allowed; opacity: .5; filter: grayscale(.35); }
+.brush-size-value { position: absolute; z-index: 2; left: clamp(var(--brush-bubble-half, 25px), var(--brush-progress), calc(100% - var(--brush-bubble-half, 25px))); top: 0; max-width: calc(100% - 2px); transform: translateX(-50%); padding: 3px 7px; border-radius: 9px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 700; line-height: 1.2; white-space: nowrap; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .1s ease; }
+.brush-size-value::after { content: ""; position: absolute; left: 50%; bottom: -4px; width: 8px; height: 8px; background: var(--ink); transform: translateX(-50%) rotate(45deg); }
+.brush-size-control.is-active .brush-size-value { opacity: 1; visibility: visible; }
 .notice { border-radius: 15px; padding: 12px 14px; background: #fff8dd; color: #6d5d31; font-size: 14px; line-height: 1.5; margin: 12px 0; }
 .filters { display: flex; gap: 8px; margin: 12px 0 16px; }
 .filters select { padding: 10px; }

@@ -362,4 +362,34 @@ function rankingHarness(claims, drawings = {}) {
   assert.equal(state.rankingSnapshot, null); assert.equal(state.rankingSnapshotPromise, null);
 }
 
+{
+  const paths = [];
+  const state = {
+    user: { id: "solver" }, cacheOwnerUid: "solver", cacheGeneration: 1,
+    likeCache: new Map([["safe-drawing", { count: 2, liked: false }]]),
+    galleryLists: {}, galleryMetadata: {}
+  };
+  const db = {
+    ref(path) {
+      paths.push(path);
+      return {
+        transaction: async update => {
+          const value = update(null);
+          return { committed: true, snapshot: { val: () => value } };
+        }
+      };
+    }
+  };
+  const toggleLike = Function(
+    "state", "db", "performance", "showToast", "console",
+    `"use strict"; ${pick("isCacheSessionCurrent")}; ${pick("toggleLike")}; return toggleLike;`
+  )(state, db, { now: () => 0 }, () => {}, { info() {} });
+  const result = await toggleLike("safe-drawing", {
+    drawerId: "drawer", status: "solved", imageReady: true
+  });
+  assert.deepEqual(result, { count: 3, liked: true });
+  assert.deepEqual(paths, ["drawingLikes/safe-drawing/solver"],
+    "the settled drawing passed by the answer result must avoid a drawings/{id} reread");
+}
+
 console.log("Firebase list read reduction checks passed.");

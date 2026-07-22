@@ -49,9 +49,9 @@ function expiryHarness() {
   const query = { equalTo: value => { assert.equal(value, "open"); return query; }, once: () => { reads++; return nextRead; } };
   const db = { ref: path => { assert.equal(path, "drawings"); return { orderByChild: key => { assert.equal(key, "status"); return query; } }; } };
   const api = Function(
-    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "console",
+    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "currentRecentFinalizedDrawing", "console",
     `"use strict"; ${pick("expireOldDrawings")}; ${pick("loadOpenDrawings")}; return { expireOldDrawings, loadOpenDrawings };`
-  )(state, db, () => now, () => { invalidations++; }, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), { warn: (...args) => warnings.push(args) });
+  )(state, db, () => now, () => { invalidations++; }, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), () => null, { warn: (...args) => warnings.push(args) });
   return {
     state, warnings, ...api,
     setNow: value => { now = value; },
@@ -161,9 +161,9 @@ function solveHarness(sort) {
   const query = { equalTo: () => query, once: async () => { reads++; return snapshot; } };
   const db = { ref: () => ({ orderByChild: () => query }) };
   const api = Function(
-    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "console",
+    "state", "db", "serverNow", "invalidateGalleryListsByStatus", "EXPIRY_SWEEP_INTERVAL_MS", "cleanupStaleProvisionalDrawings", "currentRecentFinalizedDrawing", "console",
     `"use strict"; ${pick("expireOldDrawings")}; ${pick("loadOpenDrawings")}; return { expireOldDrawings, loadOpenDrawings };`
-  )(state, db, () => now, () => {}, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), { warn() {} });
+  )(state, db, () => now, () => {}, 60_000, async ({ snapshot }) => ({ snapshot, failed: [] }), () => null, { warn() {} });
   return { api, get reads() { return reads; }, sort };
 }
 
@@ -187,9 +187,9 @@ function galleryHarness() {
   const db = { ref: () => ({ orderByChild: key => ({ equalTo: status => ({ once: async () => { assert.equal(key, "status"); reads[status]++; return makeSnapshot(records[status]); } }) }) }) };
   const ensureLikeState = async id => id === "a" ? { count: 5, liked: true } : { count: 3, liked: false };
   const api = Function(
-    "state", "db", "expireOldDrawings", "ensureLikeState", "performance", "console", "sortGalleryDrawings",
+    "state", "db", "expireOldDrawings", "ensureLikeState", "performance", "console", "sortGalleryDrawings", "mergeRecentFinalizedDrawings",
     `"use strict"; ${pick("loadGalleryMetadata")}; ${pick("loadGalleryDrawings")}; return { loadGalleryMetadata, loadGalleryDrawings };`
-  )(state, db, async () => ({}), ensureLikeState, { now: () => 0 }, { info() {} }, (list, sort) => [...list].sort((a, b) => sort === "popular" ? b.likeCount - a.likeCount : sort === "old" ? (a.solvedAt || a.expiredAt) - (b.solvedAt || b.expiredAt) : (b.solvedAt || b.expiredAt) - (a.solvedAt || a.expiredAt)));
+  )(state, db, async () => ({}), ensureLikeState, { now: () => 0 }, { info() {} }, (list, sort) => [...list].sort((a, b) => sort === "popular" ? b.likeCount - a.likeCount : sort === "old" ? (a.solvedAt || a.expiredAt) - (b.solvedAt || b.expiredAt) : (b.solvedAt || b.expiredAt) - (a.solvedAt || a.expiredAt)), list => list);
   return { state, reads, api };
 }
 

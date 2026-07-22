@@ -245,6 +245,8 @@ const FEEDBACK_SORTS = [["new", "최신순"], ["old", "과거순"], ["popular", 
 const IMAGE_OPTIONS = { detailMax: 720, thumbnailMax: 240, detailChars: 2500000, thumbnailChars: 400000, imageBytes: 1850000, thumbnailBytes: 290000, webpQuality: 0.82, version: 1, migrationBatch: 2, migrationTimeout: 25000, maxConcurrentLoads: 3 };
 const IMAGE_TOO_LARGE_MESSAGE = "그림 데이터가 너무 커서 저장할 수 없어요. 그림을 조금 단순하게 만든 뒤 다시 시도해 주세요.";
 const CACHE_LIMITS = { thumbnails: 60, details: 12, likes: 200, feedbackBodies: 40 };
+const RECENT_FINALIZED_DRAWING_TTL_MS = 10 * 60 * 1000;
+const RECENT_FINALIZED_DRAWING_MARKER = Symbol("recent-finalized-drawing");
 const FEEDBACK_CACHE_TTL_MS = 30_000;
 const FEEDBACK_BODY_CONCURRENCY = 3;
 const EXPIRY_SWEEP_INTERVAL_MS = 60_000;
@@ -313,6 +315,7 @@ const state = {
   galleryLists: {},
   galleryMetadata: {},
   galleryMetadataPromises: {},
+  recentFinalizedDrawings: new Map(),
   galleryScroll: {},
   thumbnailCache: new LimitedLruCache(CACHE_LIMITS.thumbnails),
   detailImageCache: new LimitedLruCache(CACHE_LIMITS.details),
@@ -449,6 +452,53 @@ function sortGalleryDrawings(list, sort = state.gallerySort) {
     return sort === "old" ? galleryDisplayTime(a) - galleryDisplayTime(b) : galleryDisplayTime(b) - galleryDisplayTime(a);
   });
 }
+function finalizedDrawingFreshness(drawing) {
+  return Math.max(Number(drawing?.updatedAt) || 0, Number(drawing?.solvedAt) || 0, Number(drawing?.createdAt) || 0);
+}
+function currentRecentFinalizedDrawing(drawingId) {
+  const record = state.recentFinalizedDrawings?.get(drawingId);
+  const current = !!record && record.uid === state.user?.id && record.uid === state.cacheOwnerUid && record.generation === state.cacheGeneration && serverNow() - record.finalizedAt <= RECENT_FINALIZED_DRAWING_TTL_MS && record.drawing?.status === "solved" && isSafeRecordId(drawingId) && hasPublicDrawingImage(record.drawing);
+  if (!current) state.recentFinalizedDrawings?.delete(drawingId);
+  return current ? record.drawing : null;
+}
+function applyCachedLikeToDrawing(drawing) {
+  const cachedLike = state.likeCache.get(drawing.id);
+  return { ...drawing, likeCount: cachedLike?.count ?? (Number(drawing.likeCount) || 0), isLiked: cachedLike?.liked ?? !!drawing.isLiked };
+}
+function mergeRecentFinalizedDrawings(list, status = "solved") {
+  const byId = new Map();
+  for (const drawing of list || []) {
+    if (!drawing || !isSafeRecordId(drawing.id) || drawing.status !== status || !hasPublicDrawingImage(drawing)) continue;
+    byId.set(drawing.id, applyCachedLikeToDrawing(drawing));
+  }
+  if (status !== "solved") return [...byId.values()];
+  for (const drawingId of [...state.recentFinalizedDrawings.keys()]) {
+    const finalized = currentRecentFinalizedDrawing(drawingId);
+    if (!finalized) { byId.delete(drawingId); continue; }
+    const serverDrawing = byId.get(drawingId);
+    if (serverDrawing && serverDrawing[RECENT_FINALIZED_DRAWING_MARKER] !== true && finalizedDrawingFreshness(serverDrawing) >= finalizedDrawingFreshness(finalized)) {
+      state.recentFinalizedDrawings.delete(drawingId);
+      continue;
+    }
+    const overlayDrawing = applyCachedLikeToDrawing({ ...finalized, id: drawingId });
+    overlayDrawing[RECENT_FINALIZED_DRAWING_MARKER] = true;
+    byId.set(drawingId, overlayDrawing);
+  }
+  return [...byId.values()];
+}
+function cacheRecentFinalizedDrawing(drawingId, drawing) {
+  const uid = state.user?.id;
+  if (!uid || uid !== state.cacheOwnerUid || !isSafeRecordId(drawingId) || drawing?.status !== "solved" || drawing.solverId !== uid || !hasPublicDrawingImage(drawing)) return false;
+  const finalized = applyCachedLikeToDrawing({ ...drawing, id: drawingId });
+  state.recentFinalizedDrawings.set(drawingId, { uid, generation: state.cacheGeneration, finalizedAt: serverNow(), drawing: finalized });
+  state.galleryMetadata.solved = mergeRecentFinalizedDrawings(state.galleryMetadata.solved || [], "solved");
+  for (const [key, list] of Object.entries(state.galleryLists)) {
+    if (key.startsWith("solved:")) state.galleryLists[key] = sortGalleryDrawings(mergeRecentFinalizedDrawings(list, "solved"), key.slice("solved:".length));
+    else if (key.startsWith("artist:")) delete state.galleryLists[key];
+  }
+  return true;
+}
+function removeRecentFinalizedDrawing(drawingId) { state.recentFinalizedDrawings?.delete(drawingId); }
 function invalidateGalleryListsByStatus(status) {
   const prefix = `${status}:`;
   for (const key of Object.keys(state.galleryLists)) {
@@ -466,6 +516,7 @@ function resetUserSessionCaches() {
   state.galleryLists = {};
   state.galleryMetadata = {};
   state.galleryMetadataPromises = {};
+  state.recentFinalizedDrawings?.clear();
   state.galleryScroll = {};
   state.galleryArtistDrawingId = null;
   state.galleryArtist = null;
@@ -2367,7 +2418,7 @@ async function loadOpenDrawings(sort = "new") {
   const list = [];
   snap.forEach(child => {
     const d = child.val() || {};
-    if (/^[A-Za-z0-9_-]{1,80}$/.test(child.key) && (d.imageData || d.imageReady === true) && Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
+    if (/^[A-Za-z0-9_-]{1,80}$/.test(child.key) && !currentRecentFinalizedDrawing(child.key) && (d.imageData || d.imageReady === true) && Number(d.expiresAt) > serverNow()) list.push({ ...d, id: child.key });
     else if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) console.warn("[security] 안전하지 않은 drawing ID를 표시에서 제외했습니다.", child.key);
   });
   return list.sort((a, b) => sort === "new" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt);
@@ -2588,7 +2639,11 @@ async function withdrawDrawing(drawingId) {
   if (!result.committed) throw new Error("회수할 수 없는 그림이에요.");
 }
 async function loadGalleryMetadata(status) {
-  if (state.galleryMetadata[status]) return state.galleryMetadata[status];
+  if (state.galleryMetadata[status]) {
+    const merged = mergeRecentFinalizedDrawings(state.galleryMetadata[status], status);
+    state.galleryMetadata[status] = merged;
+    return merged;
+  }
   if (state.galleryMetadataPromises[status]) return state.galleryMetadataPromises[status];
   let metadataPromise;
   metadataPromise = (async () => {
@@ -2598,11 +2653,11 @@ async function loadGalleryMetadata(status) {
       snap.forEach(child => {
         const d = child.val() || {};
         if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key) || (!d.imageData && d.imageReady !== true)) { if (!/^[A-Za-z0-9_-]{1,80}$/.test(child.key)) console.warn("[security] 안전하지 않은 drawing ID를 표시에서 제외했습니다.", child.key); return; }
-        const cachedLike = state.likeCache.get(child.key);
-        list.push({ ...d, likeCount: cachedLike?.count ?? (Number(d.likeCount) || 0), isLiked: cachedLike?.liked ?? false, id: child.key });
+        list.push({ ...d, id: child.key });
       });
-      if (state.galleryMetadataPromises[status] === metadataPromise) state.galleryMetadata[status] = list;
-      return list;
+      const merged = mergeRecentFinalizedDrawings(list, status);
+      if (state.galleryMetadataPromises[status] === metadataPromise) state.galleryMetadata[status] = merged;
+      return merged;
     } finally {
       if (state.galleryMetadataPromises[status] === metadataPromise) delete state.galleryMetadataPromises[status];
     }
@@ -2782,6 +2837,7 @@ async function adminDeleteDrawing(drawingId) {
 }
 function invalidateDrawingCachesAfterAdminDelete(drawingId, status) {
   if (status) invalidateGalleryListsByStatus(status);
+  removeRecentFinalizedDrawing(drawingId);
   state.thumbnailCache.delete(drawingId);
   state.detailImageCache.delete(drawingId);
   state.likeCache.delete(drawingId);
@@ -3945,6 +4001,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
 
   if (settledDrawing) {
     invalidateGalleryListsByStatus("solved");
+    cacheRecentFinalizedDrawing(resolvedId, settledDrawing);
     await claimAnswerRewards(resolvedId, settledDrawing);
     return { ...outcome, drawingId: resolvedId, likeDrawing: settledDrawing };
   }
@@ -3953,6 +4010,7 @@ async function submitAnswer(drawingId, answer, hintUsed) {
   if (!result.committed) return { correct: false, message: "다른 사람이 먼저 맞혔어요." };
 
   invalidateGalleryListsByStatus("solved");
+  cacheRecentFinalizedDrawing(resolvedId, transactionDrawing);
   await claimAnswerRewards(resolvedId, transactionDrawing);
   return { ...outcome, drawingId: resolvedId, likeDrawing: transactionDrawing };
 }

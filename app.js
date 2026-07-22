@@ -307,6 +307,8 @@ const state = {
   galleryView: "thumb",
   gallerySort: "new",
   galleryIndex: 0,
+  galleryArtistDrawingId: null,
+  galleryArtist: null,
   galleryLists: {},
   galleryMetadata: {},
   galleryMetadataPromises: {},
@@ -414,10 +416,40 @@ function drawerName(d) { return d.drawerNickname || d.drawerDisplayName || "알 
 function solverName(d) { return d.solverNickname || d.solverDisplayName || "알 수 없음"; }
 function drawingOwnerId(d) { return d?.drawerId || d?.drawerUid || d?.ownerUid || d?.authorUid || d?.userId || null; }
 function isOwnDrawing(d) { return !!state.user?.id && drawingOwnerId(d) === state.user.id; }
+function normalizedArtistName(drawing) { return String(drawerName(drawing) || "").trim().normalize("NFC"); }
+function hasViewableArtist(drawing) {
+  const name = normalizedArtistName(drawing);
+  return !!name && name !== "알 수 없음";
+}
+function galleryArtistIdentity(drawing) {
+  if (!drawing || !isSafeRecordId(drawing.id) || !hasViewableArtist(drawing)) return null;
+  return { drawingId: drawing.id, ownerId: drawingOwnerId(drawing), name: normalizedArtistName(drawing) };
+}
+function isDrawingByArtist(drawing, artist) {
+  if (!drawing || !artist || !hasViewableArtist(drawing)) return false;
+  const ownerId = drawingOwnerId(drawing);
+  const sameName = normalizedArtistName(drawing) === artist.name;
+  if (artist.ownerId) return ownerId ? ownerId === artist.ownerId : sameName;
+  return sameName;
+}
+function galleryDisplayTime(drawing) {
+  for (const field of [drawing?.status === "solved" ? "solvedAt" : "expiredAt", "updatedAt", "createdAt"]) {
+    const rawValue = drawing?.[field];
+    const value = Number(rawValue);
+    if (rawValue !== null && rawValue !== "" && Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+function sortGalleryDrawings(list, sort = state.gallerySort) {
+  return [...list].sort((a, b) => {
+    if (sort === "popular") return (Number(b.likeCount) || 0) - (Number(a.likeCount) || 0) || galleryDisplayTime(b) - galleryDisplayTime(a);
+    return sort === "old" ? galleryDisplayTime(a) - galleryDisplayTime(b) : galleryDisplayTime(b) - galleryDisplayTime(a);
+  });
+}
 function invalidateGalleryListsByStatus(status) {
   const prefix = `${status}:`;
   for (const key of Object.keys(state.galleryLists)) {
-    if (key.startsWith(prefix)) delete state.galleryLists[key];
+    if (key.startsWith(prefix) || key.startsWith("artist:")) delete state.galleryLists[key];
   }
   if (state.galleryMetadata) delete state.galleryMetadata[status];
   if (state.galleryMetadataPromises) delete state.galleryMetadataPromises[status];
@@ -431,6 +463,8 @@ function resetUserSessionCaches() {
   state.galleryMetadata = {};
   state.galleryMetadataPromises = {};
   state.galleryScroll = {};
+  state.galleryArtistDrawingId = null;
+  state.galleryArtist = null;
   state.pendingLikes.clear();
   state.manageDrawings = null;
   state.hintUsed = {};
@@ -666,6 +700,10 @@ function transitionRoute(name, { historyMode = "push", historyState = null, rend
   }
   routeTransitionId++;
   if (name === "gallery") {
+    const artistDrawingId = historyState?.galleryArtist === true && isSafeRecordId(historyState?.galleryArtistDrawingId) ? historyState.galleryArtistDrawingId : null;
+    if (state.galleryArtistDrawingId !== artistDrawingId) state.galleryArtist = null;
+    state.galleryArtistDrawingId = artistDrawingId;
+    if (["new", "old", "popular"].includes(historyState?.gallerySort)) state.gallerySort = historyState.gallerySort;
     const detail = historyState?.galleryDetail === true;
     state.galleryView = detail ? "frame" : "thumb";
     if (detail && Number.isInteger(historyState?.galleryIndex)) state.galleryIndex = historyState.galleryIndex;
@@ -693,7 +731,8 @@ document.addEventListener("click", e => {
   if (target) route(target.dataset.route);
 });
 document.querySelector("#backButton").addEventListener("click", () => {
-  if (state.route === "gallery" && state.galleryView === "frame") history.back();
+  if (state.route === "gallery" && state.galleryArtistDrawingId) returnFromArtistGallery();
+  else if (state.route === "gallery" && state.galleryView === "frame") history.back();
   else route("home");
 });
 
@@ -2551,26 +2590,93 @@ async function loadGalleryDrawings(status = state.galleryTab, sort = state.galle
       drawing.likeCount = like.count; drawing.isLiked = like.liked;
     }));
   }
-  const timeKey = status === "solved" ? "solvedAt" : "expiredAt";
-  const sorted = [...list].sort((a, b) => sort === "popular" ? (b.likeCount || 0) - (a.likeCount || 0) : sort === "new" ? b[timeKey] - a[timeKey] : a[timeKey] - b[timeKey]);
+  const sorted = sortGalleryDrawings(list, sort);
   console.info(`[gallery] metadata ${Math.round(performance.now() - started)}ms · ${sorted.length}개`);
   return sorted;
 }
-function galleryListKey() { return `${state.galleryTab}:${state.gallerySort}`; }
+async function loadGalleryArtistDrawings(sort = state.gallerySort) {
+  const artistDrawingId = state.galleryArtistDrawingId;
+  await expireOldDrawings();
+  const [solved, expired] = await Promise.all([loadGalleryMetadata("solved"), loadGalleryMetadata("expired")]);
+  const combined = [...solved, ...expired];
+  const selected = combined.find(drawing => drawing.id === artistDrawingId);
+  const retained = state.galleryArtist?.drawingId === artistDrawingId ? state.galleryArtist : null;
+  const artist = galleryArtistIdentity(selected) || retained;
+  if (!artist || state.galleryArtistDrawingId !== artistDrawingId) return null;
+  state.galleryArtist = artist;
+  const list = combined.filter(drawing => ["solved", "expired"].includes(drawing.status) && hasPublicDrawingImage(drawing) && isSafeRecordId(drawing.id) && isDrawingByArtist(drawing, artist));
+  if (sort === "popular") {
+    await Promise.all(list.map(async drawing => {
+      const like = await ensureLikeState(drawing.id);
+      drawing.likeCount = like.count; drawing.isLiked = like.liked;
+    }));
+  }
+  return sortGalleryDrawings(list, sort);
+}
+function galleryListKey() { return state.galleryArtistDrawingId ? `artist:${state.galleryArtistDrawingId}:${state.gallerySort}` : `${state.galleryTab}:${state.gallerySort}`; }
+function galleryHistoryState(detail = state.galleryView === "frame") {
+  return {
+    ...(history.state || {}),
+    route: "gallery",
+    galleryDetail: detail,
+    galleryIndex: detail ? state.galleryIndex : 0,
+    gallerySort: state.gallerySort,
+    ...(state.galleryArtistDrawingId
+      ? { galleryArtist: true, galleryArtistDrawingId: state.galleryArtistDrawingId, galleryHasGalleryBack: true }
+      : { galleryArtist: false, galleryArtistDrawingId: null, galleryHasGalleryBack: false })
+  };
+}
+function openGalleryArtist(drawing) {
+  const artist = galleryArtistIdentity(drawing);
+  if (!artist) return false;
+  if (state.galleryView === "thumb") state.galleryScroll[galleryListKey()] = scrollY;
+  state.galleryArtistDrawingId = artist.drawingId;
+  state.galleryArtist = artist;
+  state.galleryView = "thumb";
+  state.galleryIndex = 0;
+  state.galleryScroll[galleryListKey()] = 0;
+  history.pushState(galleryHistoryState(false), "", "#gallery");
+  renderGallery();
+  return true;
+}
+function showFullGallery({ replace = false } = {}) {
+  state.galleryArtistDrawingId = null;
+  state.galleryArtist = null;
+  state.galleryView = "thumb";
+  state.galleryIndex = 0;
+  const nextState = galleryHistoryState(false);
+  if (replace) history.replaceState(nextState, "", "#gallery");
+  else history.pushState(nextState, "", "#gallery");
+  renderGallery();
+}
+function returnFromArtistGallery() {
+  if (history.state?.galleryHasGalleryBack) history.back();
+  else showFullGallery({ replace: true });
+}
 async function renderGallery(force = false) {
   const request = beginScreenRequest("gallery");
   if (!isConfigured()) { if (isScreenRequestCurrent(request)) appEl.innerHTML = '<section class="screen"><div class="empty">Firebase 설정을 연결해 주세요.</div></section>'; return; }
   const key = galleryListKey();
-  if (force) invalidateGalleryListsByStatus(state.galleryTab);
-  const cacheHit = !!state.galleryLists[key];
-  if (!state.galleryLists[key]) loading(request);
+  if (force) {
+    if (state.galleryArtistDrawingId) { invalidateGalleryListsByStatus("solved"); invalidateGalleryListsByStatus("expired"); }
+    else invalidateGalleryListsByStatus(state.galleryTab);
+  }
+  const cachedList = state.galleryLists[key] && (!state.galleryArtistDrawingId || state.galleryArtist?.drawingId === state.galleryArtistDrawingId) ? state.galleryLists[key] : null;
+  const cacheHit = !!cachedList;
+  if (!cachedList) loading(request);
   try {
-    const list = state.galleryLists[key] || await loadGalleryDrawings();
+    const list = cachedList || (state.galleryArtistDrawingId ? await loadGalleryArtistDrawings() : await loadGalleryDrawings());
     if (!isScreenRequestCurrent(request)) return;
+    if (!list) { showFullGallery({ replace: true }); return; }
     state.galleryLists[key] = list;
     if (state.galleryIndex >= list.length) state.galleryIndex = 0;
     const renderedAt = performance.now();
-    appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}"><h2>전시장</h2><p class="muted">그림을 감상하고 마음에 쏙 들면 좋아요!</p><div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div><div class="gallery-controls"><select id="gallerySort"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div>${state.isAdmin ? '<button class="button ghost migration-open" data-open-migration>기존 그림 최적화</button>' : ""}<div id="galleryContent"></div></section>`;
+    const artistMode = !!state.galleryArtistDrawingId;
+    const heading = artistMode ? `${escapeHtml(state.galleryArtist.name)}님의 작품` : "전시장";
+    const description = artistMode ? "완성 액자와 미해결 그림을 함께 보여드려요." : "그림을 감상하고 마음에 쏙 들면 좋아요!";
+    const artistReturn = artistMode ? '<button class="gallery-return-button" data-gallery-return>← 전체 전시장으로</button>' : "";
+    const tabs = artistMode ? "" : `<div class="tabs"><button data-gallery-tab="solved" class="${state.galleryTab === "solved" ? "active" : ""}">완성 액자</button><button data-gallery-tab="expired" class="${state.galleryTab === "expired" ? "active" : ""}">미해결 그림</button></div>`;
+    appEl.innerHTML = `<section class="screen gallery-screen${state.galleryView === "frame" ? " gallery-detail" : ""}${artistMode ? " gallery-artist-screen" : ""}">${artistReturn}<h2>${heading}</h2><p class="muted">${description}</p>${tabs}<div class="gallery-controls"><select id="gallerySort" aria-label="작품 정렬"><option value="new" ${state.gallerySort === "new" ? "selected" : ""}>최신순</option><option value="old" ${state.gallerySort === "old" ? "selected" : ""}>과거순</option><option value="popular" ${state.gallerySort === "popular" ? "selected" : ""}>인기순</option></select></div>${state.isAdmin ? '<button class="button ghost migration-open" data-open-migration>기존 그림 최적화</button>' : ""}<div id="galleryContent"></div></section>`;
     renderGalleryContent(list);
     bindGalleryShell();
     console.info(`[gallery] cards rendered ${Math.round(performance.now() - renderedAt)}ms · server reread=${!cacheHit}`);
@@ -2609,30 +2715,39 @@ function invalidateDrawingCachesAfterAdminDelete(drawingId, status) {
 }
 function galleryFrame(list, i) {
   const d = list[i];
-  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot"><img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div><button class="button like-button ${d.drawerId === state.user.id ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${d.drawerId === state.user.id ? " · 내 그림" : ""}</button></div>`;
+  const statusBadge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : "";
+  return `<div class="frame ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><div class="gallery-image-slot detail-slot">${statusBadge}<img class="frame-image" data-detail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div></div><div class="frame-nav"><button class="button ghost" data-prev ${i === 0 ? "disabled" : ""}>이전</button><span>${i + 1} / ${list.length}</span><button class="button ghost" data-next ${i === list.length - 1 ? "disabled" : ""}>다음</button></div><div class="frame-info"><button class="secret-word" data-secret>제시어 보기 </button><div class="meta"><span>그린 사람: ${escapeHtml(drawerName(d))}</span><span>${d.status === "solved" ? `맞힌 사람: ${escapeHtml(solverName(d))}` : "맞힌 사람: 없음"}</span></div>${galleryArtistButton(d, false)}<button class="button like-button ${isOwnDrawing(d) ? "ghost" : "secondary"} ${d.isLiked ? "is-liked" : ""} full" data-like="${d.id}" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart" aria-hidden="true">${d.isLiked ? "♥" : "♡"}</span> 좋아요 <span data-like-count>${Number(d.likeCount) || 0}</span>${isOwnDrawing(d) ? " · 내 그림" : ""}</button></div>`;
+}
+function galleryArtistButton(drawing, compact = false) {
+  if (state.galleryArtistDrawingId || !galleryArtistIdentity(drawing)) return "";
+  const name = drawerName(drawing);
+  const visibleName = isOwnDrawing(drawing) ? "내" : escapeHtml(name);
+  const label = escapeAttribute(`${name}님의 작품 보기`);
+  return `<button class="gallery-artist-button${compact ? " compact-artist-button" : ""}" data-artist-drawing="${drawing.id}" aria-label="${label}"><span aria-hidden="true">👤</span><span class="artist-button-name">${visibleName}${isOwnDrawing(drawing) ? "" : "님"}</span><span class="artist-button-action">작품 보기 〉</span></button>`;
 }
 function galleryThumbs(list) {
-  return `<div class="thumbnail-grid">${list.map((d, i) => `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot"><img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="좋아요" aria-pressed="${d.isLiked ? "true" : "false"}" ${d.drawerId === state.user.id ? "disabled" : ""}><span class="heart">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`).join("")}</div>`;
+  return `<div class="thumbnail-grid">${list.map((d, i) => { const badge = state.galleryArtistDrawingId ? `<span class="gallery-status-badge">${d.status === "solved" ? "완성 액자" : "미해결 그림"}</span>` : ""; return `<div class="thumbnail-wrap ${Number(d.likeCount) > 0 ? "has-likes" : ""}" data-gallery-card="${d.id}"><button class="thumbnail" data-thumb="${i}"><div class="gallery-image-slot">${badge}<img data-thumbnail-image="${d.id}" alt="전시 그림"><span class="image-loading">불러오는 중…</span></div><small>· ${escapeHtml(drawerName(d))}</small></button><button class="thumbnail-like-button ${d.isLiked ? "is-liked" : ""}" data-like="${d.id}" aria-label="좋아요" aria-pressed="${d.isLiked ? "true" : "false"}" ${isOwnDrawing(d) ? "disabled" : ""}><span class="heart">${d.isLiked ? "♥" : "♡"}</span> <span data-like-count>${Number(d.likeCount) || 0}</span></button>${galleryArtistButton(d, true)}${state.isAdmin ? `<button class="button danger admin-delete-button" data-admin-delete="${d.id}">관리자 삭제</button>` : ""}</div>`; }).join("")}</div>`;
 }
 function renderGalleryContent(list = state.galleryLists[galleryListKey()] || []) {
   const content = document.querySelector("#galleryContent");
   if (!content) return;
   document.querySelector(".gallery-screen")?.classList.toggle("gallery-detail", state.galleryView === "frame");
-  content.innerHTML = list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", "아직 전시된 그림이 없어요.");
+  content.innerHTML = list.length ? (state.galleryView === "frame" ? galleryFrame(list, state.galleryIndex) : galleryThumbs(list)) : emptyHtml("🖼️", state.galleryArtistDrawingId ? "이 작가의 전시 작품이 아직 없어요." : "아직 전시된 그림이 없어요.");
   bindGalleryContent(list);
 }
 function bindGalleryShell() {
   document.querySelectorAll("[data-gallery-tab]").forEach(button => button.onclick = () => {
     state.galleryScroll[galleryListKey()] = 0;
     state.galleryTab = button.dataset.galleryTab; state.galleryIndex = 0; state.galleryView = "thumb";
-    history.replaceState({ route: "gallery", galleryDetail: false }, "", "#gallery"); renderGallery();
+    history.replaceState(galleryHistoryState(false), "", "#gallery"); renderGallery();
   });
-  gallerySort.onchange = () => { state.galleryScroll[galleryListKey()] = 0; state.gallerySort = gallerySort.value; state.galleryIndex = 0; renderGallery(); };
+  gallerySort.onchange = () => { state.galleryScroll[galleryListKey()] = 0; state.gallerySort = gallerySort.value; state.galleryIndex = 0; history.replaceState(galleryHistoryState(false), "", "#gallery"); renderGallery(); };
+  document.querySelector("[data-gallery-return]")?.addEventListener("click", returnFromArtistGallery);
   document.querySelector("[data-open-migration]")?.addEventListener("click", openMigrationPanel);
 }
 function moveGalleryIndex(delta, list) {
   state.galleryIndex += delta;
-  history.replaceState({ ...(history.state || {}), route: "gallery", galleryDetail: true, galleryIndex: state.galleryIndex }, "", "#gallery");
+  history.replaceState(galleryHistoryState(true), "", "#gallery");
   renderGalleryContent(list);
 }
 function bindGalleryContent(list) {
@@ -2642,7 +2757,12 @@ function bindGalleryContent(list) {
   document.querySelector("[data-secret]")?.addEventListener("click", e => { e.currentTarget.textContent = `제시어: ${list[state.galleryIndex].word}`; });
   document.querySelectorAll("[data-thumb]").forEach(button => button.onclick = () => {
     state.galleryScroll[galleryListKey()] = scrollY; state.galleryIndex = Number(button.dataset.thumb); state.galleryView = "frame";
-    history.pushState({ route: "gallery", galleryDetail: true, galleryIndex: state.galleryIndex }, "", "#gallery"); renderGalleryContent(list);
+    history.pushState(galleryHistoryState(true), "", "#gallery"); renderGalleryContent(list);
+  });
+  document.querySelectorAll("[data-artist-drawing]").forEach(button => button.onclick = event => {
+    event.stopPropagation();
+    const drawing = list.find(item => item.id === button.dataset.artistDrawing && isSafeRecordId(item.id));
+    if (drawing) openGalleryArtist(drawing);
   });
   document.querySelectorAll("[data-like]").forEach(button => button.onclick = async event => {
     event.stopPropagation();
@@ -2658,7 +2778,7 @@ function bindGalleryContent(list) {
     finally {
       state.pendingLikes.delete(id);
       if (!isScreenRequestCurrent(request)) return;
-      const own = list.find(d => d.id === id)?.drawerId === state.user.id;
+      const own = isOwnDrawing(list.find(d => d.id === id));
       document.querySelectorAll(`[data-like="${id}"]`).forEach(item => { item.disabled = own; });
     }
   });

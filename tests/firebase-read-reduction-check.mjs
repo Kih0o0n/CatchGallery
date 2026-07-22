@@ -187,9 +187,9 @@ function galleryHarness() {
   const db = { ref: () => ({ orderByChild: key => ({ equalTo: status => ({ once: async () => { assert.equal(key, "status"); reads[status]++; return makeSnapshot(records[status]); } }) }) }) };
   const ensureLikeState = async id => id === "a" ? { count: 5, liked: true } : { count: 3, liked: false };
   const api = Function(
-    "state", "db", "expireOldDrawings", "ensureLikeState", "performance", "console",
+    "state", "db", "expireOldDrawings", "ensureLikeState", "performance", "console", "sortGalleryDrawings",
     `"use strict"; ${pick("loadGalleryMetadata")}; ${pick("loadGalleryDrawings")}; return { loadGalleryMetadata, loadGalleryDrawings };`
-  )(state, db, async () => ({}), ensureLikeState, { now: () => 0 }, { info() {} });
+  )(state, db, async () => ({}), ensureLikeState, { now: () => 0 }, { info() {} }, (list, sort) => [...list].sort((a, b) => sort === "popular" ? b.likeCount - a.likeCount : sort === "old" ? (a.solvedAt || a.expiredAt) - (b.solvedAt || b.expiredAt) : (b.solvedAt || b.expiredAt) - (a.solvedAt || a.expiredAt)));
   return { state, reads, api };
 }
 

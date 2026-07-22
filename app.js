@@ -320,6 +320,7 @@ const state = {
   cacheOwnerUid: null,
   cacheGeneration: 0,
   pendingLikes: new Set(),
+  pendingLikeOwners: new Map(),
   answerSuccessModalCleanup: null,
   solveObserver: null,
   solveLoader: null,
@@ -470,6 +471,7 @@ function resetUserSessionCaches() {
   state.galleryArtist = null;
   state.galleryHasGalleryBack = false;
   state.pendingLikes.clear();
+  state.pendingLikeOwners.clear();
   state.manageDrawings = null;
   state.hintUsed = {};
   state.editingFeedback = null;
@@ -495,6 +497,23 @@ function setCacheSession(uid) {
 }
 function isCacheSessionCurrent(uid, generation) {
   return !!uid && state.cacheOwnerUid === uid && state.user?.id === uid && state.cacheGeneration === generation;
+}
+function beginLikeOperation(drawingId) {
+  if (!isSafeRecordId(drawingId) || state.pendingLikes.has(drawingId)) return null;
+  const token = Symbol(drawingId);
+  state.pendingLikes.add(drawingId);
+  state.pendingLikeOwners.set(drawingId, token);
+  return token;
+}
+function finishLikeOperation(drawingId, token) {
+  if (!token || state.pendingLikeOwners.get(drawingId) !== token) return false;
+  state.pendingLikeOwners.delete(drawingId);
+  state.pendingLikes.delete(drawingId);
+  return true;
+}
+function clearPendingLikeOperation(drawingId) {
+  state.pendingLikeOwners.delete(drawingId);
+  state.pendingLikes.delete(drawingId);
 }
 function showToast(message) {
   const el = document.querySelector("#toast");
@@ -2766,7 +2785,7 @@ function invalidateDrawingCachesAfterAdminDelete(drawingId, status) {
   state.thumbnailCache.delete(drawingId);
   state.detailImageCache.delete(drawingId);
   state.likeCache.delete(drawingId);
-  state.pendingLikes.delete(drawingId);
+  clearPendingLikeOperation(drawingId);
 }
 function likeAccessibilityLabel(value, own = false) {
   const count = Math.max(0, Number(value?.count) || 0);
@@ -2833,8 +2852,10 @@ function bindGalleryContent(list) {
   document.querySelectorAll("[data-like]").forEach(button => button.onclick = async event => {
     event.stopPropagation();
     const id = button.dataset.like;
-    if (button.disabled || state.pendingLikes.has(id)) return;
-    state.pendingLikes.add(id); button.disabled = true;
+    if (button.disabled) return;
+    const operationToken = beginLikeOperation(id);
+    if (!operationToken) return;
+    button.disabled = true;
     try {
       await ensureLikeState(id); await toggleLike(id, list.find(d => d.id === id));
       if (!isScreenRequestCurrent(request)) return;
@@ -2842,7 +2863,7 @@ function bindGalleryContent(list) {
     }
     catch (error) { if (isScreenRequestCurrent(request)) showToast(userErrorMessage(error)); }
     finally {
-      state.pendingLikes.delete(id);
+      if (!finishLikeOperation(id, operationToken)) return;
       if (!isScreenRequestCurrent(request)) return;
       const own = isOwnDrawing(list.find(d => d.id === id));
       document.querySelectorAll(`[data-like="${id}"]`).forEach(item => { item.disabled = own; });
@@ -3798,8 +3819,9 @@ function showAnswerSuccessModal(result) {
   };
   likeButton.onclick = async event => {
     event.stopPropagation();
-    if (likeButton.disabled || state.pendingLikes.has(drawingId) || !ownsModal() || !sessionIsCurrent()) return;
-    state.pendingLikes.add(drawingId);
+    if (likeButton.disabled || !ownsModal() || !sessionIsCurrent()) return;
+    const operationToken = beginLikeOperation(drawingId);
+    if (!operationToken) return;
     likeButton.dataset.likeState = "saving";
     likeButton.disabled = true;
     status.textContent = "좋아요를 저장하는 중…";
@@ -3819,7 +3841,7 @@ function showAnswerSuccessModal(result) {
       if (!ownsModal()) return;
       status.textContent = "좋아요를 바꾸지 못했어요. 다시 시도해 주세요.";
     } finally {
-      state.pendingLikes.delete(drawingId);
+      if (!finishLikeOperation(drawingId, operationToken)) return;
       if (sessionIsCurrent()) {
         if (ownsModal() && likeButton.dataset.likeState === "saving") likeButton.dataset.likeState = "ready";
         syncGalleryLike(drawingId);

@@ -59,6 +59,61 @@ assert.equal(wrong.correct, false);
 assert.equal(wrong.drawingId, undefined);
 assert.equal(wrong.likeDrawing, undefined);
 
+{
+  const pendingState = { pendingLikes: new Set(), pendingLikeOwners: new Map() };
+  const operations = Function(
+    "state", "isSafeRecordId",
+    `"use strict"; ${pick("beginLikeOperation")}; ${pick("finishLikeOperation")}; ${pick("clearPendingLikeOperation")}; return { beginLikeOperation, finishLikeOperation, clearPendingLikeOperation };`
+  )(pendingState, value => /^[A-Za-z0-9_-]{1,80}$/.test(value || ""));
+  const oldToken = operations.beginLikeOperation("drawing-x");
+  assert.ok(oldToken); assert.equal(operations.beginLikeOperation("drawing-x"), null);
+  pendingState.pendingLikes.clear(); pendingState.pendingLikeOwners.clear();
+  const newToken = operations.beginLikeOperation("drawing-x");
+  assert.equal(operations.finishLikeOperation("drawing-x", oldToken), false);
+  assert.equal(pendingState.pendingLikes.has("drawing-x"), true);
+  assert.equal(pendingState.pendingLikeOwners.get("drawing-x"), newToken);
+  const otherToken = operations.beginLikeOperation("drawing-y");
+  assert.equal(operations.finishLikeOperation("drawing-x", newToken), true);
+  assert.equal(pendingState.pendingLikes.has("drawing-y"), true);
+  operations.clearPendingLikeOperation("drawing-y");
+  assert.equal(pendingState.pendingLikes.size, 0); assert.equal(pendingState.pendingLikeOwners.size, 0);
+  assert.equal(operations.finishLikeOperation("drawing-y", otherToken), false);
+}
+
+{
+  const galleryState = { pendingLikes: new Set(), pendingLikeOwners: new Map(), galleryIndex: 0, galleryArtistDrawingId: null };
+  let currentButtons = [];
+  const document = {
+    querySelector: () => null,
+    querySelectorAll: selector => selector === "[data-like]" || selector.startsWith("[data-like=") ? currentButtons : []
+  };
+  const gates = [];
+  const bindGalleryContent = Function(
+    "state", "document", "moveGalleryIndex", "galleryListKey", "history", "galleryHistoryState", "renderGalleryContent",
+    "isSafeRecordId", "openGalleryArtist", "ensureLikeState", "toggleLike", "isScreenRequestCurrent", "syncGalleryLike",
+    "showToast", "userErrorMessage", "isOwnDrawing", "confirmModal", "adminDeleteDrawing", "renderGallery", "observeGalleryThumbnails", "loadGalleryDetail",
+    `"use strict"; let routeTransitionId = 1; const screenRequestIds = { gallery: 1 }; ${pick("beginLikeOperation")}; ${pick("finishLikeOperation")}; ${pick("bindGalleryContent")}; return bindGalleryContent;`
+  )(
+    galleryState, document, () => {}, () => "solved:new", { pushState() {} }, () => ({}), () => {},
+    value => /^[A-Za-z0-9_-]{1,80}$/.test(value || ""), () => {}, async () => {},
+    () => new Promise(resolve => gates.push(resolve)), () => true, () => {}, () => {}, error => String(error),
+    () => false, () => {}, async () => {}, () => {}, () => {}, () => {}
+  );
+  const button = id => ({ dataset: { like: id }, disabled: false });
+  const event = { stopPropagation() {} };
+  const list = [{ id: "drawing-x", drawerId: "artist" }];
+  const oldButton = button("drawing-x"); currentButtons = [oldButton]; bindGalleryContent(list);
+  const oldRequest = oldButton.onclick(event); await Promise.resolve(); await Promise.resolve();
+  galleryState.pendingLikes.clear(); galleryState.pendingLikeOwners.clear();
+  const newButton = button("drawing-x"); currentButtons = [newButton]; bindGalleryContent(list);
+  const newRequest = newButton.onclick(event); await Promise.resolve(); await Promise.resolve();
+  assert.equal(gates.length, 2); gates[0](); await oldRequest;
+  assert.equal(galleryState.pendingLikes.has("drawing-x"), true); assert.equal(newButton.disabled, true);
+  await newButton.onclick(event); assert.equal(gates.length, 2, "the new owner's disabled button must block duplicates");
+  gates[1](); await newRequest;
+  assert.equal(galleryState.pendingLikes.has("drawing-x"), false); assert.equal(galleryState.pendingLikeOwners.size, 0); assert.equal(newButton.disabled, false);
+}
+
 const modal = pick("showAnswerSuccessModal");
 assert.match(modal, /data-like="\$\{drawingId\}"/);
 assert.match(modal, /data-answer-success-like="\$\{drawingId\}"/);
@@ -66,7 +121,13 @@ assert.match(modal, /aria-pressed="false"/);
 assert.match(modal, /ensureLikeState\(drawingId\)/);
 assert.match(modal, /toggleLike\(drawingId, likeDrawing\)/);
 assert.match(modal, /syncGalleryLike\(drawingId\)/);
-assert.match(modal, /state\.pendingLikes\.has\(drawingId\)/);
+assert.match(modal, /beginLikeOperation\(drawingId\)/);
+assert.match(modal, /finishLikeOperation\(drawingId, operationToken\)/);
+assert.doesNotMatch(modal, /pendingLikes\.(?:add|delete)\(drawingId\)/);
+const galleryBinding = pick("bindGalleryContent");
+assert.match(galleryBinding, /beginLikeOperation\(id\)/);
+assert.match(galleryBinding, /finishLikeOperation\(id, operationToken\)/);
+assert.doesNotMatch(galleryBinding, /pendingLikes\.(?:add|delete)\(id\)/);
 assert.match(modal, /ownsModal/);
 assert.match(modal, /sessionIsCurrent/);
 assert.match(modal, /isCacheSessionCurrent\(userId, generation\)/);
